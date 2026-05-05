@@ -14,12 +14,13 @@ export async function getGlobalConfig(req: Request, res: Response): Promise<void
 }
 
 export async function setGlobalConfig(req: Request, res: Response): Promise<void> {
-  const { semester_type, start_date, end_date } = req.body;
-  if (!semester_type || !start_date || !end_date) {
-    res.status(400).json({ success: false, message: 'semester_type, start_date, and end_date are required.' });
+  const { active_semester_type, semester_type, start_date, end_date } = req.body;
+  const semType = active_semester_type || semester_type;
+  if (!semType || !start_date || !end_date) {
+    res.status(400).json({ success: false, message: 'active_semester_type, start_date, and end_date are required.' });
     return;
   }
-  const id = await adminService.setGlobalConfig(semester_type, start_date, end_date);
+  const id = await adminService.setGlobalConfig(semType, start_date, end_date);
   res.status(201).json({ success: true, message: 'Global config set.', data: { config_id: id } });
 }
 

@@ -74,29 +74,31 @@ Write-Host (Test-Endpoint 'GET /admin/students' 'GET' '/admin/students' $ah)
 Write-Host (Test-Endpoint 'GET /admin/alumni' 'GET' '/admin/alumni' $ah)
 Write-Host (Test-Endpoint 'GET /admin/notices' 'GET' '/admin/notices' $ah)
 Write-Host (Test-Endpoint 'POST /admin/config' 'POST' '/admin/config' $ah '{"active_semester_type":"ODD","start_date":"2024-07-01","end_date":"2024-11-30"}')
-Write-Host (Test-Endpoint 'POST /admin/seating' 'POST' '/admin/seating' $ah '{"classrooms":[{"room":"101","capacity":30}]}')
+Write-Host (Test-Endpoint 'POST /admin/exam-seating' 'POST' '/admin/exam-seating' $ah '{"classrooms":[{"room":"101","capacity":30}]}')
+Write-Host (Test-Endpoint 'POST /admin/invigilation' 'POST' '/admin/invigilation-matrix' $ah '{"exam_date":"2024-11-30"}')
+Write-Host (Test-Endpoint 'POST /admin/batch-progression' 'POST' '/admin/batch-progression' $ah '{}')
 
 Write-Host ""
 Write-Host "=== HOD ==="
 Write-Host (Test-Endpoint 'GET /hod/faculty' 'GET' '/hod/faculty' $hh)
 Write-Host (Test-Endpoint 'GET /hod/analytics' 'GET' '/hod/analytics' $hh)
-Write-Host (Test-Endpoint 'GET /hod/grievances' 'GET' '/hod/grievances' $hh)
+Write-Host (Test-Endpoint 'GET /hod/grievances/escalated' 'GET' '/hod/grievances/escalated' $hh)
 Write-Host (Test-Endpoint 'GET /hod/notices' 'GET' '/hod/notices' $hh)
 Write-Host (Test-Endpoint 'GET /hod/subjects' 'GET' '/hod/subjects' $hh)
-Write-Host (Test-Endpoint 'GET /hod/leave-log' 'GET' '/hod/leave-log' $hh)
+Write-Host (Test-Endpoint 'GET /hod/leave' 'GET' '/hod/leave' $hh)
 
 Write-Host ""
 Write-Host "=== CLASS INCHARGE ==="
 Write-Host (Test-Endpoint 'GET /class-incharge/analytics' 'GET' '/class-incharge/analytics' $cih)
-Write-Host (Test-Endpoint 'GET /class-incharge/at-risk' 'GET' '/class-incharge/at-risk' $cih)
+Write-Host (Test-Endpoint 'GET /class-incharge/students/at-risk' 'GET' '/class-incharge/students/at-risk' $cih)
 Write-Host (Test-Endpoint 'GET /class-incharge/students' 'GET' '/class-incharge/students' $cih)
-Write-Host (Test-Endpoint 'GET /class-incharge/progression' 'GET' '/class-incharge/progression' $cih)
+Write-Host (Test-Endpoint 'GET /class-incharge/progression-readiness' 'GET' '/class-incharge/progression-readiness' $cih)
 Write-Host (Test-Endpoint 'GET /class-incharge/notices' 'GET' '/class-incharge/notices' $cih)
 
 Write-Host ""
 Write-Host "=== SUBJECT INCHARGE ==="
 Write-Host (Test-Endpoint 'GET /subject-incharge/subjects' 'GET' '/subject-incharge/subjects' $sih)
-Write-Host (Test-Endpoint 'GET /subject-incharge/active-slot' 'GET' '/subject-incharge/active-slot' $sih)
+Write-Host (Test-Endpoint 'GET /subject-incharge/slot/active' 'GET' '/subject-incharge/slot/active' $sih)
 
 Write-Host ""
 Write-Host "=== TEACHER GUARDIAN ==="

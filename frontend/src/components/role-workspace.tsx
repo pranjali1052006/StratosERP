@@ -92,6 +92,7 @@ export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
   const [apiBaseUrl, setApiBaseUrl] = useState(DEFAULT_BASE_URL);
   const [token, setToken] = useState("");
   const [bodyMap, setBodyMap] = useState<Record<string, string>>(initialBodyMap);
+  const [fileMap, setFileMap] = useState<Record<string, File | null>>({});
   const [actionState, setActionState] = useState<Record<string, ActionState>>({});
   const [activePanel, setActivePanel] = useState<Panel>("overview");
   const [methodFilter, setMethodFilter] = useState<ActionBlueprint["method"] | "ALL">("ALL");
@@ -194,6 +195,7 @@ export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
 
   useEffect(() => {
     setBodyMap(initialBodyMap);
+    setFileMap({});
     setActionState({});
     setActivePanel("overview");
     setMethodFilter("ALL");
@@ -225,11 +227,19 @@ export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
 
   async function runAction(action: ActionBlueprint): Promise<void> {
     const bodyText = bodyMap[action.id] || "";
+    const isMultipart = action.transport === "multipart";
+    const selectedFile = fileMap[action.id] || null;
+    let parsedBody: Record<string, unknown> | undefined;
+
     setLastActionId(action.id);
 
     if (action.method !== "GET" && action.method !== "DELETE" && bodyText.trim()) {
       try {
-        JSON.parse(bodyText);
+        const candidate = JSON.parse(bodyText);
+        if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
+          throw new Error("Payload must be a JSON object.");
+        }
+        parsedBody = candidate as Record<string, unknown>;
       } catch {
         setActionState((prev) => ({
           ...prev,
@@ -247,25 +257,63 @@ export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
       }
     }
 
+    if (isMultipart && !selectedFile) {
+      setActionState((prev) => ({
+        ...prev,
+        [action.id]: {
+          loading: false,
+          error: "Please attach a file before executing this multipart endpoint.",
+        },
+      }));
+      pushActivity({
+        title: action.label,
+        detail: "Execution blocked because no file was attached.",
+        status: "error",
+      });
+      return;
+    }
+
     setActionState((prev) => ({
       ...prev,
       [action.id]: { loading: true },
     }));
 
     try {
-      const response = await fetch("/api/proxy", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          baseUrl: apiBaseUrl,
-          path: action.path,
-          method: action.method,
-          token,
-          bodyText,
-        }),
-      });
+      const response = await (async () => {
+        if (!isMultipart) {
+          return fetch("/api/proxy", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              baseUrl: apiBaseUrl,
+              path: action.path,
+              method: action.method,
+              token,
+              bodyText,
+            }),
+          });
+        }
+
+        const formData = new FormData();
+        formData.set("baseUrl", apiBaseUrl);
+        formData.set("path", action.path);
+        formData.set("method", action.method);
+        formData.set("fieldsJson", JSON.stringify(parsedBody || {}));
+        formData.set("fileFieldName", action.fileFieldName || "file");
+
+        if (token.trim()) {
+          formData.set("token", token.trim());
+        }
+
+        formData.set("file", selectedFile as File);
+
+        return fetch("/api/proxy", {
+          method: "POST",
+          body: formData,
+        });
+      })();
 
       const proxyPayload = (await response.json()) as {
         ok: boolean;
@@ -517,6 +565,7 @@ export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
                 {filteredActions.map((action) => {
                   const state = actionState[action.id];
                   const bodyText = bodyMap[action.id] || "";
+                  const selectedFile = fileMap[action.id];
 
                   return (
                     <article key={action.id} className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
@@ -524,6 +573,11 @@ export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
                         <span className={`rounded-full px-3 py-1 text-xs font-semibold ${methodTone(action.method)}`}>
                           {action.method}
                         </span>
+                        {action.transport === "multipart" ? (
+                          <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-800">
+                            MULTIPART
+                          </span>
+                        ) : null}
                         <code className="rounded-lg bg-zinc-900 px-2 py-1 text-xs text-zinc-100">{action.path}</code>
                       </div>
                       <h3 className="mt-3 text-lg font-semibold text-zinc-900">{action.label}</h3>
@@ -531,7 +585,9 @@ export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
 
                       {action.method !== "GET" && action.method !== "DELETE" ? (
                         <label className="mt-4 block">
-                          <span className="text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">Payload</span>
+                          <span className="text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">
+                            {action.transport === "multipart" ? "Form Fields JSON" : "Payload"}
+                          </span>
                           <textarea
                             value={bodyText}
                             onChange={(event) =>
@@ -543,6 +599,25 @@ export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
                             rows={8}
                             className="mt-2 w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-900 outline-none transition focus:border-zinc-500"
                           />
+                        </label>
+                      ) : null}
+
+                      {action.transport === "multipart" ? (
+                        <label className="mt-4 block">
+                          <span className="text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">Attach File</span>
+                          <input
+                            type="file"
+                            onChange={(event) =>
+                              setFileMap((prev) => ({
+                                ...prev,
+                                [action.id]: event.target.files?.[0] || null,
+                              }))
+                            }
+                            className="mt-2 block w-full cursor-pointer rounded-xl border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-900 file:mr-3 file:rounded-lg file:border-0 file:bg-zinc-900 file:px-3 file:py-2 file:text-xs file:font-medium file:text-white hover:file:bg-zinc-700"
+                          />
+                          <p className="mt-2 text-xs text-zinc-600">
+                            {selectedFile ? `Selected: ${selectedFile.name}` : "No file selected."}
+                          </p>
                         </label>
                       ) : null}
 

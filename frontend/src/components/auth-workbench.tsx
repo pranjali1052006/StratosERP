@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { FormEvent, useState } from "react";
 
-const API_URL_KEY = "stratos.apiBaseUrl";
 const TOKEN_KEY = "stratos.jwtToken";
 const DEFAULT_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:5000";
 
@@ -22,21 +21,14 @@ type ProxyResponse = {
 };
 
 export default function AuthWorkbench() {
-  const [apiBaseUrl, setApiBaseUrl] = useState(DEFAULT_BASE_URL);
   const [email, setEmail] = useState("admin@stratos.edu");
   const [password, setPassword] = useState("password123");
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
 
-  useEffect(() => {
-    const savedBaseUrl = window.localStorage.getItem(API_URL_KEY);
+  async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
 
-    if (savedBaseUrl) {
-      setApiBaseUrl(savedBaseUrl);
-    }
-  }, []);
-
-  async function handleLogin(): Promise<void> {
     const trimmedEmail = email.trim();
 
     if (!trimmedEmail || !password) {
@@ -58,7 +50,7 @@ export default function AuthWorkbench() {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            baseUrl: apiBaseUrl,
+            baseUrl: DEFAULT_BASE_URL,
             path,
             method: "POST",
             bodyText: JSON.stringify({ email: trimmedEmail, password }),
@@ -74,7 +66,6 @@ export default function AuthWorkbench() {
 
         const token = payload.data?.data?.token;
         if (payload.ok && token) {
-          window.localStorage.setItem(API_URL_KEY, apiBaseUrl.trim() || DEFAULT_BASE_URL);
           window.localStorage.setItem(TOKEN_KEY, token);
           setFeedback("Login successful.");
           return;
@@ -98,14 +89,17 @@ export default function AuthWorkbench() {
       <p className="text-xs uppercase tracking-[0.24em] text-zinc-500">StratosERP</p>
       <h1 className="mt-3 text-3xl font-semibold tracking-tight text-zinc-950 sm:text-4xl">Login</h1>
 
-      <div className="mt-6 grid gap-4">
+      <form onSubmit={handleSubmit} className="mt-6 grid gap-4">
         <label className="block">
           <span className="text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">Email</span>
           <input
+            type="email"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
             className="mt-2 w-full rounded-xl border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:bg-white"
             placeholder="admin@stratos.edu"
+            autoComplete="email"
+            required
           />
         </label>
 
@@ -117,18 +111,19 @@ export default function AuthWorkbench() {
             onChange={(event) => setPassword(event.target.value)}
             className="mt-2 w-full rounded-xl border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:bg-white"
             placeholder="password123"
+            autoComplete="current-password"
+            required
           />
         </label>
-      </div>
 
-      <button
-        type="button"
-        onClick={handleLogin}
-        disabled={loading}
-        className="mt-5 w-full rounded-xl bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-500"
-      >
-        {loading ? "Logging in..." : "Login"}
-      </button>
+        <button
+          type="submit"
+          disabled={loading}
+          className="mt-1 w-full rounded-xl bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-500"
+        >
+          {loading ? "Logging in..." : "Login"}
+        </button>
+      </form>
 
       {feedback ? <p className="mt-4 rounded-xl bg-zinc-100 px-3 py-2 text-sm text-zinc-700">{feedback}</p> : null}
     </section>

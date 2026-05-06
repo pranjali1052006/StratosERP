@@ -63,8 +63,13 @@ export async function downloadMaterial(req: Request, res: Response): Promise<voi
     res.status(400).json({ success: false, message: 'object_name required.' });
     return;
   }
-  const url = await minioService.getPresignedDownloadUrl(object_name as string, 'study-materials');
-  res.json({ success: true, data: { download_url: url } });
+  try {
+    const url = await minioService.getPresignedDownloadUrl(object_name as string, 'study-materials');
+    res.json({ success: true, data: { download_url: url } });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'File storage service unavailable.';
+    res.status(503).json({ success: false, message });
+  }
 }
 
 export async function getLabMarks(req: Request, res: Response): Promise<void> {

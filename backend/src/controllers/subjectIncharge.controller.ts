@@ -90,10 +90,15 @@ export async function getLectureLogs(req: Request, res: Response): Promise<void>
 
 export async function uploadMaterial(req: Request, res: Response): Promise<void> {
   if (!req.file) { res.status(400).json({ success: false, message: 'File required.' }); return; }
-  const { subject_id } = req.body;
-  const objectName = `subject-${subject_id}/${Date.now()}-${req.file.originalname}`;
-  const url = await minioService.uploadStudyMaterial(req.file.buffer, objectName, req.file.mimetype);
-  res.status(201).json({ success: true, message: 'Material uploaded.', data: { url, object_name: objectName } });
+  try {
+    const { subject_id } = req.body;
+    const objectName = `subject-${subject_id}/${Date.now()}-${req.file.originalname}`;
+    const url = await minioService.uploadStudyMaterial(req.file.buffer, objectName, req.file.mimetype);
+    res.status(201).json({ success: true, message: 'Material uploaded.', data: { url, object_name: objectName } });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'File storage service unavailable.';
+    res.status(503).json({ success: false, message });
+  }
 }
 
 export async function syllabusAnalysis(req: Request, res: Response): Promise<void> {

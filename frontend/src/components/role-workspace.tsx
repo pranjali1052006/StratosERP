@@ -7,6 +7,7 @@ import {
   type ActionBlueprint,
   type RoleBlueprint,
 } from "@/lib/role-blueprints";
+import { phase1Dashboards } from "@/lib/phase1-dashboards";
 
 type ActionState = {
   loading: boolean;
@@ -157,6 +158,7 @@ export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
     () => roleBlueprints.filter((item) => item.slug !== role.slug).slice(0, 4),
     [role.slug]
   );
+  const phaseDashboard = phase1Dashboards[role.slug];
 
   const latestAction = useMemo(() => {
     if (!lastActionId) return null;
@@ -361,7 +363,7 @@ export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
           <h2 className="px-2 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">Workspace</h2>
           <div className="space-y-2">
             {[
-              { id: "overview", label: "Overview" },
+              { id: "overview", label: "Dashboard" },
               { id: "operations", label: "Operations" },
               { id: "analytics", label: "Analytics" },
               { id: "activity", label: "Activity" },
@@ -402,20 +404,48 @@ export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
           {activePanel === "overview" ? (
             <>
               <article className="rounded-3xl border border-zinc-200 bg-white p-5 shadow-[0_16px_45px_rgba(15,23,42,0.08)]">
-                <h2 className="text-xl font-semibold text-zinc-900">Workflow Priorities</h2>
-                <p className="mt-1 text-sm text-zinc-600">
-                  Production-ready checkpoints tracked for the current role cycle.
-                </p>
-                <ul className="mt-4 grid gap-3 md:grid-cols-2">
-                  {role.checkpoints.map((point, idx) => (
-                    <li key={point} className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3">
-                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                        Step {idx + 1}
-                      </p>
-                      <p className="mt-1 text-sm text-zinc-800">{point}</p>
-                    </li>
+                <h2 className="text-xl font-semibold text-zinc-900">Phase-I {role.roleName} Dashboard</h2>
+                <p className="mt-1 text-sm text-zinc-600">{phaseDashboard.northStar}</p>
+
+                <div className="mt-5 grid gap-4 md:grid-cols-2">
+                  {phaseDashboard.sections.map((section) => (
+                    <article key={section.id} className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+                      <h3 className="text-sm font-semibold text-zinc-900">{section.title}</h3>
+                      <p className="mt-2 text-xs text-zinc-600">{section.summary}</p>
+                      <ul className="mt-3 space-y-2">
+                        {section.highlights.map((highlight) => (
+                          <li key={highlight} className="rounded-lg bg-white px-3 py-2 text-xs text-zinc-700">
+                            {highlight}
+                          </li>
+                        ))}
+                      </ul>
+                    </article>
                   ))}
-                </ul>
+                </div>
+
+                <div className="mt-5 grid gap-3 md:grid-cols-2">
+                  <article className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+                    <h3 className="text-sm font-semibold text-zinc-900">Workflow Priorities</h3>
+                    <ul className="mt-3 space-y-2">
+                      {role.checkpoints.map((point, idx) => (
+                        <li key={point} className="rounded-lg bg-white px-3 py-2 text-xs text-zinc-700">
+                          {`Step ${idx + 1}: ${point}`}
+                        </li>
+                      ))}
+                    </ul>
+                  </article>
+
+                  <article className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+                    <h3 className="text-sm font-semibold text-zinc-900">Governance Rails</h3>
+                    <ul className="mt-3 space-y-2">
+                      {phaseDashboard.governanceRail.map((rule) => (
+                        <li key={rule} className="rounded-lg bg-white px-3 py-2 text-xs text-zinc-700">
+                          {rule}
+                        </li>
+                      ))}
+                    </ul>
+                  </article>
+                </div>
               </article>
 
               <article className="rounded-3xl border border-zinc-200 bg-white p-5 shadow-[0_16px_45px_rgba(15,23,42,0.08)]">

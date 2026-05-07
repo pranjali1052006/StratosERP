@@ -220,6 +220,174 @@ function buildBodyTemplate(action: ActionBlueprint): string {
 }
 
 function buildSections(role: RoleBlueprint): SidebarSection[] {
+  if (role.slug === "hod") {
+    return [
+      {
+        id: "insights",
+        title: "Insights",
+        detail: "Department performance and student visibility",
+        actionIds: ["hod-analytics", "hod-track-student", "hod-alumni"],
+      },
+      {
+        id: "faculty-management",
+        title: "Faculty Management",
+        detail: "Roster, role assignment and subject mapping",
+        actionIds: ["hod-faculty", "hod-subjects", "hod-assign-subject", "hod-assign-role"],
+      },
+      {
+        id: "operations",
+        title: "Operational Controls",
+        detail: "Leave planning and escalation handling",
+        actionIds: ["hod-leave", "hod-leave-log", "hod-escalated-grievances", "hod-resolve-grievance"],
+      },
+      {
+        id: "communication",
+        title: "Communication",
+        detail: "Manual and AI-assisted branch notices",
+        actionIds: ["hod-notice-create", "hod-notice-ai", "hod-notice-list"],
+      },
+    ];
+  }
+
+  if (role.slug === "class-incharge") {
+    return [
+      {
+        id: "class-analytics",
+        title: "Class Analytics",
+        detail: "Performance overview and student risk monitoring",
+        actionIds: ["ci-analytics", "ci-risk", "ci-students"],
+      },
+      {
+        id: "student-support",
+        title: "Student Support",
+        detail: "Portfolio review and PTM preparation",
+        actionIds: ["ci-portfolio", "ci-ptm"],
+      },
+      {
+        id: "progression",
+        title: "Progression",
+        detail: "Readiness tracking for semester advancement",
+        actionIds: ["ci-progression-readiness"],
+      },
+      {
+        id: "communication",
+        title: "Communication",
+        detail: "Class notice publishing and review",
+        actionIds: ["ci-notice", "ci-notice-list"],
+      },
+    ];
+  }
+
+  if (role.slug === "subject-incharge") {
+    return [
+      {
+        id: "subject-control",
+        title: "Subject Control",
+        detail: "Subject list, active slot and attendance capture",
+        actionIds: ["si-subjects", "si-slot", "si-attendance", "si-attendance-records"],
+      },
+      {
+        id: "evaluation",
+        title: "Evaluation",
+        detail: "Marks entry and performance analytics",
+        actionIds: ["si-marks", "si-suppli-marks", "si-subject-marks", "si-subject-analytics"],
+      },
+      {
+        id: "lecture-planning",
+        title: "Lecture Planning",
+        detail: "Lecture logs and syllabus pacing support",
+        actionIds: ["si-lecture", "si-lecture-logs", "si-analysis"],
+      },
+      {
+        id: "materials",
+        title: "Study Materials",
+        detail: "Upload classroom material for students",
+        actionIds: ["si-upload-material"],
+      },
+    ];
+  }
+
+  if (role.slug === "practical-teacher") {
+    return [
+      {
+        id: "sessions",
+        title: "Session Management",
+        detail: "Create, complete and lock practical sessions",
+        actionIds: ["pt-sessions", "pt-create-session", "pt-complete-session", "pt-lock-session"],
+      },
+      {
+        id: "attendance-marks",
+        title: "Attendance & Marks",
+        detail: "Record and review attendance and evaluation",
+        actionIds: ["pt-attendance", "pt-attendance-view", "pt-marks", "pt-marks-view"],
+      },
+      {
+        id: "lab-setup",
+        title: "Lab Setup",
+        detail: "Manage experiments and batches",
+        actionIds: ["pt-experiments", "pt-create-experiment", "pt-batches", "pt-create-batch"],
+      },
+      {
+        id: "submissions",
+        title: "Submissions",
+        detail: "Track and update practical submissions",
+        actionIds: ["pt-submission", "pt-submissions-view"],
+      },
+    ];
+  }
+
+  if (role.slug === "teacher-guardian") {
+    return [
+      {
+        id: "mentee-overview",
+        title: "Mentee Overview",
+        detail: "Mentee list, portfolio and improvement tracking",
+        actionIds: ["tg-mentees", "tg-portfolio", "tg-report"],
+      },
+      {
+        id: "aicte-management",
+        title: "AICTE Points",
+        detail: "Award points and check activity history",
+        actionIds: ["tg-aicte-award", "tg-aicte-points"],
+      },
+      {
+        id: "grievance-support",
+        title: "Grievance Support",
+        detail: "Review and resolve assigned grievances",
+        actionIds: ["tg-grievances", "tg-resolve"],
+      },
+      {
+        id: "communication",
+        title: "Communication",
+        detail: "Notices relevant to mentees",
+        actionIds: ["tg-notices"],
+      },
+    ];
+  }
+
+  if (role.slug === "student") {
+    return [
+      {
+        id: "academic-view",
+        title: "Academic View",
+        detail: "Dashboard, timetable and lab performance",
+        actionIds: ["st-dashboard", "st-timetable", "st-lab"],
+      },
+      {
+        id: "guidance-support",
+        title: "Guidance & Support",
+        detail: "Faculty locator and grievance support",
+        actionIds: ["st-locator", "st-grievance-submit", "st-grievances"],
+      },
+      {
+        id: "notices-materials",
+        title: "Notices & Materials",
+        detail: "Notices and downloadable study resources",
+        actionIds: ["st-notices", "st-materials", "st-material-download"],
+      },
+    ];
+  }
+
   if (role.slug !== "admin") {
     return [
       {

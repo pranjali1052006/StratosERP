@@ -128,21 +128,6 @@ export const roleBlueprints: RoleBlueprint[] = [
           exam_date: "2026-05-25",
         },
       },
-      {
-        id: "admin-create-faculty",
-        label: "Create Faculty",
-        description: "Create a faculty account directly from admin control.",
-        method: "POST",
-        path: "/api/admin/faculty",
-        body: {
-          name: "Prof. R. Iyer",
-          email_id: "riyer@tcetmumbai.in",
-          designation_role: "Subject Incharge",
-          is_admin: false,
-          is_hod: false,
-          password: "Faculty@123",
-        },
-      },
       { id: "admin-faculty-list", label: "List Faculty", description: "Get complete faculty registry.", method: "GET", path: "/api/admin/faculty" },
       {
         id: "admin-students-list",

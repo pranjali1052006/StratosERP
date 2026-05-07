@@ -1,14 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
-  Legend,
-  Pie,
-  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -42,10 +38,32 @@ type ProxyEnvelope = {
   error?: string;
 };
 
+type FieldSpec = {
+  key: string;
+  label: string;
+  sample: unknown;
+  inputType: "text" | "number" | "date" | "boolean" | "list";
+};
+
+type YearProgressionRow = {
+  academic_year: "1st" | "2nd" | "3rd" | "4th";
+  odd_semester: number;
+  even_semester: number;
+  odd_strength: number;
+  even_strength: number;
+  odd_blocked: number;
+  even_blocked: number;
+  year_back_count: number;
+  next_action_label: string;
+};
+
+type ProgressionBoard = {
+  active_semester_type: "ODD" | "EVEN";
+  years: YearProgressionRow[];
+};
+
 const TOKEN_KEY = "stratos.jwtToken";
 const DEFAULT_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:5000";
-const PIE_COLORS = ["#334155", "#22c55e", "#f97316", "#06b6d4", "#a855f7", "#ef4444"];
-
 const CSV_TEMPLATES: Record<string, string> = {
   "admin-ingest-students":
     "uid,email_id,current_semester,academic_year,password\n2023-CSE-A-01-2027,student1@tcetmumbai.in,5,3rd,Welcome@123\n",
@@ -64,13 +82,140 @@ const CSV_TEMPLATES: Record<string, string> = {
     "context,target_audience\nSend low attendance warning to Semester 5 students below 75% attendance.,INSTITUTE\n",
 };
 
-function prettyPrint(value: unknown): string {
-  if (typeof value === "string") return value;
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return "Unable to render response.";
+function toLabel(key: string): string {
+  return key
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function isPrimitive(value: unknown): value is string | number | boolean {
+  const type = typeof value;
+  return type === "string" || type === "number" || type === "boolean";
+}
+
+function isPrimitiveList(value: unknown): value is Array<string | number | boolean> {
+  return Array.isArray(value) && value.every((entry) => isPrimitive(entry));
+}
+
+function buildFieldSpecs(action: ActionBlueprint): FieldSpec[] {
+  if (!action.body) return [];
+
+  return Object.entries(action.body).reduce<FieldSpec[]>((acc, [key, value]) => {
+    if (typeof value === "number") {
+      acc.push({ key, label: toLabel(key), sample: value, inputType: "number" });
+      return acc;
+    }
+    if (typeof value === "boolean") {
+      acc.push({ key, label: toLabel(key), sample: value, inputType: "boolean" });
+      return acc;
+    }
+    if (typeof value === "string") {
+      const looksLikeDate = /^\d{4}-\d{2}-\d{2}$/.test(value);
+      acc.push({ key, label: toLabel(key), sample: value, inputType: looksLikeDate ? "date" : "text" });
+      return acc;
+    }
+    if (isPrimitiveList(value)) {
+      acc.push({ key, label: toLabel(key), sample: value, inputType: "list" });
+      return acc;
+    }
+    return acc;
+  }, []);
+}
+
+function createFieldValueMap(action: ActionBlueprint): Record<string, string> {
+  const fields = buildFieldSpecs(action);
+  const values: Record<string, string> = {};
+
+  for (const field of fields) {
+    const sample = field.sample;
+    values[field.key] = isPrimitiveList(sample) ? sample.join(", ") : String(sample ?? "");
   }
+
+  return values;
+}
+
+function parseFieldValue(field: FieldSpec, rawValue: string): unknown {
+  if (field.inputType === "number") {
+    const parsed = Number(rawValue);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  if (field.inputType === "boolean") {
+    return rawValue === "true";
+  }
+
+  if (field.inputType === "list") {
+    const sample = Array.isArray(field.sample) ? field.sample : [];
+    const list = rawValue
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+
+    if (!sample.length) return list;
+
+    if (typeof sample[0] === "number") {
+      return list.map((entry) => {
+        const parsed = Number(entry);
+        return Number.isFinite(parsed) ? parsed : 0;
+      });
+    }
+
+    if (typeof sample[0] === "boolean") {
+      return list.map((entry) => entry.toLowerCase() === "true");
+    }
+
+    return list;
+  }
+
+  return rawValue;
+}
+
+function renderPayloadData(payload: unknown): ReactNode {
+  if (payload === null || payload === undefined) {
+    return <span className="text-zinc-500">No data returned.</span>;
+  }
+
+  if (typeof payload === "string" || typeof payload === "number" || typeof payload === "boolean") {
+    return <span className="text-zinc-800">{String(payload)}</span>;
+  }
+
+  if (Array.isArray(payload)) {
+    if (!payload.length) {
+      return <span className="text-zinc-500">No records found.</span>;
+    }
+
+    return (
+      <div className="space-y-2">
+        {payload.map((item, index) => (
+          <div key={`payload-item-${index}`} className="rounded-xl border border-zinc-200 bg-white p-3">
+            {renderPayloadData(item)}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (typeof payload === "object") {
+    const entries = Object.entries(payload as Record<string, unknown>);
+    if (!entries.length) {
+      return <span className="text-zinc-500">No fields available.</span>;
+    }
+
+    return (
+      <div className="grid gap-2 md:grid-cols-2">
+        {entries.map(([key, value]) => (
+          <div key={key} className="rounded-xl border border-zinc-200 bg-white p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">{toLabel(key)}</p>
+            <div className="mt-1 text-sm">{renderPayloadData(value)}</div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return <span className="text-zinc-500">Unsupported response type.</span>;
 }
 
 function escapeCsvCell(value: unknown): string {
@@ -478,19 +623,6 @@ function extractAnalyticsBars(payload: unknown): Array<{ name: string; value: nu
     .filter((entry) => Number.isFinite(entry.value));
 }
 
-function extractProgressionSlices(payload: unknown): Array<{ name: string; value: number }> {
-  const data = pickDataObject(payload);
-  if (!data) return [];
-
-  const progressed = Number(data.progressed ?? 0);
-  const alumniTransitions = Number(data.alumniTransitions ?? 0);
-
-  return [
-    { name: "Semester Increased", value: Number.isFinite(progressed) ? progressed : 0 },
-    { name: "Moved to Alumni", value: Number.isFinite(alumniTransitions) ? alumniTransitions : 0 },
-  ];
-}
-
 export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
   const actionById = useMemo(() => {
     return role.actions.reduce<Record<string, ActionBlueprint>>((acc, action) => {
@@ -504,9 +636,14 @@ export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
   const [token, setToken] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [bodyMap, setBodyMap] = useState<Record<string, string>>({});
+  const [fieldValueMap, setFieldValueMap] = useState<Record<string, Record<string, string>>>({});
   const [fileMap, setFileMap] = useState<Record<string, File | null>>({});
   const [csvFileMap, setCsvFileMap] = useState<Record<string, File | null>>({});
   const [actionState, setActionState] = useState<Record<string, ActionState>>({});
+  const [progressionBoard, setProgressionBoard] = useState<ProgressionBoard | null>(null);
+  const [progressionLoading, setProgressionLoading] = useState(false);
+  const [promotingYear, setPromotingYear] = useState<YearProgressionRow["academic_year"] | null>(null);
+  const [progressionFeedback, setProgressionFeedback] = useState<string | null>(null);
   const [noticeMode, setNoticeMode] = useState<NoticeMode>("manual");
   const [manualNotice, setManualNotice] = useState({
     title: "",
@@ -529,10 +666,20 @@ export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
       return acc;
     }, {});
 
+    const nextFieldValueMap = role.actions.reduce<Record<string, Record<string, string>>>((acc, action) => {
+      acc[action.id] = createFieldValueMap(action);
+      return acc;
+    }, {});
+
     setBodyMap(nextBodyMap);
+    setFieldValueMap(nextFieldValueMap);
     setFileMap({});
     setCsvFileMap({});
     setActionState({});
+    setProgressionBoard(null);
+    setProgressionLoading(false);
+    setPromotingYear(null);
+    setProgressionFeedback(null);
     setSearchQuery("");
     setSelectedSectionId(sections[0]?.id || "operations");
     setNoticeMode("manual");
@@ -560,7 +707,11 @@ export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
     });
   }, [actionById, searchQuery, selectedSection]);
 
-  async function sendJson(path: string, method: ActionBlueprint["method"], bodyText = ""): Promise<ProxyEnvelope> {
+  const sendJson = useCallback(async (
+    path: string,
+    method: ActionBlueprint["method"],
+    bodyText = ""
+  ): Promise<ProxyEnvelope> => {
     const response = await fetch("/api/proxy", {
       method: "POST",
       headers: {
@@ -580,13 +731,13 @@ export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
       ...payload,
       ok: response.ok && payload.ok,
     };
-  }
+  }, [token]);
 
-  async function sendMultipart(
+  const sendMultipart = useCallback(async (
     action: ActionBlueprint,
     selectedFile: File,
     parsedBody: Record<string, unknown>
-  ): Promise<ProxyEnvelope> {
+  ): Promise<ProxyEnvelope> => {
     const formData = new FormData();
     formData.set("baseUrl", DEFAULT_BASE_URL);
     formData.set("path", action.path);
@@ -606,7 +757,7 @@ export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
       ...payload,
       ok: response.ok && payload.ok,
     };
-  }
+  }, [token]);
 
   function downloadTemplate(action: ActionBlueprint): void {
     const template = CSV_TEMPLATES[action.id] || buildBodyTemplate(action);
@@ -660,6 +811,23 @@ export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
         [action.id]: JSON.stringify(payload, null, 2),
       }));
 
+      const fields = buildFieldSpecs(action);
+      if (fields.length && typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
+        const payloadObject = payload as Record<string, unknown>;
+        setFieldValueMap((prev) => {
+          const next = { ...(prev[action.id] || {}) };
+          for (const field of fields) {
+            const value = payloadObject[field.key];
+            if (value === undefined || value === null) continue;
+            next[field.key] = Array.isArray(value) ? value.map(String).join(", ") : String(value);
+          }
+          return {
+            ...prev,
+            [action.id]: next,
+          };
+        });
+      }
+
       setActionState((prev) => ({
         ...prev,
         [action.id]: {
@@ -692,28 +860,33 @@ export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
       return;
     }
 
-    const bodyText = bodyMap[action.id] || "";
+    let bodyText = bodyMap[action.id] || "";
     const isMultipart = action.transport === "multipart";
     const selectedFile = fileMap[action.id] || null;
     let parsedBody: Record<string, unknown> = {};
 
-    if (action.method !== "GET" && action.method !== "DELETE" && bodyText.trim()) {
-      try {
-        const candidate = JSON.parse(bodyText);
-        if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
-          throw new Error("Payload must be a JSON object.");
+    if (action.method !== "GET" && action.method !== "DELETE") {
+      if (bodyText.trim()) {
+        try {
+          const candidate = JSON.parse(bodyText);
+          if (typeof candidate === "object" && candidate !== null && !Array.isArray(candidate)) {
+            parsedBody = candidate as Record<string, unknown>;
+          }
+        } catch {
+          parsedBody = {};
         }
-        parsedBody = candidate as Record<string, unknown>;
-      } catch {
-        setActionState((prev) => ({
-          ...prev,
-          [action.id]: {
-            loading: false,
-            error: "Please provide valid JSON.",
-          },
-        }));
-        return;
       }
+
+      const fields = buildFieldSpecs(action);
+      const values = fieldValueMap[action.id] || {};
+
+      if (fields.length) {
+        for (const field of fields) {
+          parsedBody[field.key] = parseFieldValue(field, values[field.key] ?? "");
+        }
+      }
+
+      bodyText = Object.keys(parsedBody).length ? JSON.stringify(parsedBody) : "";
     }
 
     if (isMultipart && !selectedFile) {
@@ -807,29 +980,83 @@ export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
     }
   }
 
-  async function runIncreaseSemester(): Promise<void> {
-    const action = actionById["admin-progress"];
-    if (!action) return;
+  const loadProgressionBoard = useCallback(async (): Promise<void> => {
+    if (!token.trim()) return;
 
-    await runAction(action);
+    setProgressionLoading(true);
+    try {
+      const result = await sendJson("/api/admin/batch-progression/status", "GET");
+      if (!result.ok) {
+        setProgressionFeedback(`Unable to load progression board (${result.status}).`);
+        return;
+      }
 
-    const configAction = actionById["admin-config-get"];
-    if (configAction) {
-      await runAction(configAction);
+      const root = result.data as { data?: ProgressionBoard };
+      if (root?.data?.years) {
+        setProgressionBoard(root.data);
+      }
+      setProgressionFeedback(null);
+    } catch (error) {
+      setProgressionFeedback(error instanceof Error ? error.message : "Unable to load progression board.");
+    } finally {
+      setProgressionLoading(false);
+    }
+  }, [sendJson, token]);
+
+  async function promoteYear(row: YearProgressionRow): Promise<void> {
+    if (!token.trim() || !progressionBoard) {
+      setProgressionFeedback("Please login first.");
+      return;
     }
 
-    const analyticsAction = actionById["admin-analytics"];
-    if (analyticsAction) {
-      await runAction(analyticsAction);
+    setPromotingYear(row.academic_year);
+    try {
+      const result = await sendJson(
+        "/api/admin/batch-progression/promote-year",
+        "POST",
+        JSON.stringify({
+          academic_year: row.academic_year,
+          semester_type: progressionBoard.active_semester_type,
+        })
+      );
+
+      if (!result.ok) {
+        setProgressionFeedback(`Progression failed for ${row.academic_year} (${result.status}).`);
+        return;
+      }
+
+      const data = (result.data as { data?: Record<string, unknown> })?.data;
+      const progressed = Number(data?.progressed ?? 0);
+      const alumniTransitions = Number(data?.alumniTransitions ?? 0);
+      const blockedSkipped = Number(data?.blockedSkipped ?? 0);
+      const yearBackSkipped = Number(data?.yearBackSkipped ?? 0);
+
+      setProgressionFeedback(
+        `${row.academic_year}: ${progressed} progressed, ${alumniTransitions} moved to alumni, ${blockedSkipped} blocked by KT/SUPPLI, ${yearBackSkipped} year-back or out-of-cycle.`
+      );
+
+      await loadProgressionBoard();
+
+      const analyticsAction = actionById["admin-analytics"];
+      if (analyticsAction) {
+        await runAction(analyticsAction);
+      }
+    } catch (error) {
+      setProgressionFeedback(error instanceof Error ? error.message : "Year progression failed.");
+    } finally {
+      setPromotingYear(null);
     }
   }
 
+  useEffect(() => {
+    if (role.slug !== "admin") return;
+    if (selectedSectionId !== "semester") return;
+    if (!token.trim()) return;
+    void loadProgressionBoard();
+  }, [loadProgressionBoard, role.slug, selectedSectionId, token]);
+
   const analyticsBars = useMemo(() => {
     return extractAnalyticsBars(actionState["admin-analytics"]?.payload);
-  }, [actionState]);
-
-  const progressionSlices = useMemo(() => {
-    return extractProgressionSlices(actionState["admin-progress"]?.payload);
   }, [actionState]);
 
   return (
@@ -885,44 +1112,74 @@ export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
 
         {selectedSectionId === "semester" ? (
           <article className="mt-5 rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
-            <h2 className="text-lg font-semibold text-zinc-900">Increase Semester</h2>
+            <h2 className="text-lg font-semibold text-zinc-900">Semester Progression Board</h2>
             <p className="mt-1 text-sm text-zinc-600">
-              Use this to promote eligible students across the institution in one action.
+              Manage each academic year separately. Odd cycle promotes to next semester, even cycle promotes to next year, and Semester 8 even cycle moves eligible students to alumni.
             </p>
+
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <button
                 type="button"
-                onClick={() => void runIncreaseSemester()}
-                disabled={actionState["admin-progress"]?.loading}
+                onClick={() => void loadProgressionBoard()}
+                disabled={progressionLoading}
                 className="rounded-xl bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-500"
               >
-                {actionState["admin-progress"]?.loading ? "Processing..." : "Increase Semester"}
+                {progressionLoading ? "Refreshing..." : "Refresh Board"}
               </button>
-              {actionState["admin-progress"]?.ok !== undefined ? (
+              {progressionBoard ? (
                 <span
-                  className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                    actionState["admin-progress"]?.ok
-                      ? "bg-emerald-100 text-emerald-800"
-                      : "bg-rose-100 text-rose-800"
-                  }`}
+                  className="rounded-full bg-zinc-200 px-3 py-1 text-xs font-semibold text-zinc-800"
                 >
-                  {actionState["admin-progress"]?.ok ? "Completed" : "Failed"}
+                  Current Cycle: {progressionBoard.active_semester_type}
                 </span>
               ) : null}
             </div>
-            {progressionSlices.some((slice) => slice.value > 0) ? (
-              <div className="mt-4 h-72 rounded-2xl border border-zinc-200 bg-white p-3">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={progressionSlices} dataKey="value" nameKey="name" outerRadius={95} label>
-                      {progressionSlices.map((entry, index) => (
-                        <Cell key={entry.name} fill={PIE_COLORS[index % PIE_COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
+
+            {progressionFeedback ? (
+              <p className="mt-4 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700">
+                {progressionFeedback}
+              </p>
+            ) : null}
+
+            {progressionBoard ? (
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {progressionBoard.years.map((row) => {
+                  const isBusy = promotingYear === row.academic_year;
+                  return (
+                    <div key={row.academic_year} className="rounded-2xl border border-zinc-200 bg-white p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <h3 className="text-base font-semibold text-zinc-900">{row.academic_year} Year</h3>
+                        <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-semibold text-zinc-700">
+                          {row.next_action_label}
+                        </span>
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                        <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-2">
+                          <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">Sem {row.odd_semester}</p>
+                          <p className="mt-1 font-semibold text-zinc-900">{row.odd_strength} students</p>
+                          <p className="text-xs text-rose-700">Blocked: {row.odd_blocked}</p>
+                        </div>
+                        <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-2">
+                          <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">Sem {row.even_semester}</p>
+                          <p className="mt-1 font-semibold text-zinc-900">{row.even_strength} students</p>
+                          <p className="text-xs text-rose-700">Blocked: {row.even_blocked}</p>
+                        </div>
+                      </div>
+
+                      <p className="mt-3 text-xs text-amber-700">Year Back: {row.year_back_count}</p>
+
+                      <button
+                        type="button"
+                        onClick={() => void promoteYear(row)}
+                        disabled={isBusy || progressionLoading}
+                        className="mt-3 w-full rounded-xl bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-500"
+                      >
+                        {isBusy ? "Processing..." : row.next_action_label}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             ) : null}
           </article>
@@ -1103,13 +1360,14 @@ export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
         <div className="mt-5 space-y-4">
           {visibleActions.map((action) => {
             const state = actionState[action.id];
-            const bodyText = bodyMap[action.id] || "";
             const selectedFile = fileMap[action.id];
             const csvInputFile = csvFileMap[action.id];
             const needsDetailsInput =
               action.method !== "GET" &&
               action.method !== "DELETE" &&
               !(action.transport === "multipart" && !action.body);
+            const fieldSpecs = buildFieldSpecs(action);
+            const hasComplexBody = Boolean(action.body) && fieldSpecs.length !== Object.keys(action.body || {}).length;
 
             return (
               <article key={action.id} className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
@@ -1118,20 +1376,62 @@ export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
 
                 {needsDetailsInput ? (
                   <>
-                    <label className="mt-4 block">
-                      <span className="text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">Details</span>
-                      <textarea
-                        value={bodyText}
-                        onChange={(event) =>
-                          setBodyMap((prev) => ({
-                            ...prev,
-                            [action.id]: event.target.value,
-                          }))
-                        }
-                        rows={8}
-                        className="mt-2 w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-900 outline-none transition focus:border-zinc-500"
-                      />
-                    </label>
+                    {fieldSpecs.length ? (
+                      <div className="mt-4 grid gap-3 md:grid-cols-2">
+                        {fieldSpecs.map((field) => {
+                          const fieldValue = fieldValueMap[action.id]?.[field.key] || "";
+                          const inputType = field.inputType === "number" || field.inputType === "date" ? field.inputType : "text";
+
+                          return (
+                            <label key={field.key}>
+                              <span className="text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">
+                                {field.label}
+                              </span>
+                              {field.inputType === "boolean" ? (
+                                <select
+                                  value={fieldValue || "false"}
+                                  onChange={(event) =>
+                                    setFieldValueMap((prev) => ({
+                                      ...prev,
+                                      [action.id]: {
+                                        ...(prev[action.id] || {}),
+                                        [field.key]: event.target.value,
+                                      },
+                                    }))
+                                  }
+                                  className="mt-2 w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500"
+                                >
+                                  <option value="true">True</option>
+                                  <option value="false">False</option>
+                                </select>
+                              ) : (
+                                <input
+                                  type={inputType}
+                                  value={fieldValue}
+                                  onChange={(event) =>
+                                    setFieldValueMap((prev) => ({
+                                      ...prev,
+                                      [action.id]: {
+                                        ...(prev[action.id] || {}),
+                                        [field.key]: event.target.value,
+                                      },
+                                    }))
+                                  }
+                                  placeholder={field.inputType === "list" ? "Value 1, Value 2" : "Enter value"}
+                                  className="mt-2 w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500"
+                                />
+                              )}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+
+                    {hasComplexBody ? (
+                      <p className="mt-3 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-600">
+                        This action includes structured data. Use CSV Assist below to fill it quickly without JSON editing.
+                      </p>
+                    ) : null}
 
                     <div className="mt-3 rounded-xl border border-zinc-200 bg-white p-3">
                       <p className="text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">CSV Assist</p>
@@ -1159,7 +1459,7 @@ export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
                           onClick={() => void convertCsvToJson(action)}
                           className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-zinc-700"
                         >
-                          Convert CSV to Form Data
+                          Apply CSV Data
                         </button>
                       </div>
                       <p className="mt-2 text-xs text-zinc-500">
@@ -1226,9 +1526,10 @@ export default function RoleWorkspace({ role }: { role: RoleBlueprint }) {
                 ) : null}
 
                 {state?.payload !== undefined ? (
-                  <pre className="mt-3 max-h-72 overflow-auto rounded-2xl bg-zinc-950 px-4 py-3 text-xs text-zinc-100">
-                    {prettyPrint(state.payload)}
-                  </pre>
+                  <div className="mt-3 rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
+                    <p className="text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">Response</p>
+                    <div className="mt-2">{renderPayloadData(state.payload)}</div>
+                  </div>
                 ) : null}
               </article>
             );

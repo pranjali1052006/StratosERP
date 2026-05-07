@@ -23,16 +23,13 @@ export default async function PortalRolePage({ params }: PageProps) {
 
   return (
     <main className="mx-auto w-full max-w-[1280px] px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-5 flex flex-wrap items-center gap-3">
         <Link
           href="/"
           className="inline-flex items-center rounded-full border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-100"
         >
           Back to launcher
         </Link>
-        <p className="rounded-full bg-zinc-900 px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-100">
-          Production UI
-        </p>
       </div>
       <RoleWorkspace role={roleData} />
     </main>

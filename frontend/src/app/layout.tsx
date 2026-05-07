@@ -13,8 +13,8 @@ const chivoMono = Chivo_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "StratosERP Production Portal",
-  description: "Role-based production UI for StratosERP Phase-I modules.",
+  title: "StratosERP Portal",
+  description: "Role-based portal for StratosERP modules.",
 };
 
 export default function RootLayout({

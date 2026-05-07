@@ -71,7 +71,7 @@ function extractRole(loginData?: LoginApiResponse["data"]): string | null {
 export default function AuthWorkbench() {
   const router = useRouter();
   const [email, setEmail] = useState("admin@tcetmumbai.in");
-  const [password, setPassword] = useState("159753");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
 
@@ -163,7 +163,7 @@ export default function AuthWorkbench() {
             className="mt-2 w-full rounded-xl border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:bg-white"
             placeholder="admin@tcetmumbai.in"
             autoComplete="email"
-            pattern="^[^\\s@]+@tcetmumbai\\.in$"
+            pattern={"^[^\\s@]+@tcetmumbai\\.in$"}
             title="Use your @tcetmumbai.in email"
             required
           />
@@ -176,8 +176,8 @@ export default function AuthWorkbench() {
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             className="mt-2 w-full rounded-xl border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:bg-white"
-            placeholder="159753"
-            autoComplete="current-password"
+            placeholder="Enter your password"
+            autoComplete="off"
             required
           />
         </label>

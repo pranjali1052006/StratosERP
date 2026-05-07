@@ -1,5 +1,13 @@
 import pool from '../config/database';
 
+function isYearBack(academicYear: string, currentSemester: number): boolean {
+  if (academicYear === '1st') return ![1, 2].includes(currentSemester);
+  if (academicYear === '2nd') return ![3, 4].includes(currentSemester);
+  if (academicYear === '3rd') return ![5, 6].includes(currentSemester);
+  if (academicYear === '4th') return ![7, 8].includes(currentSemester);
+  return false;
+}
+
 // ── Dashboard ─────────────────────────────────────────────────
 
 export async function getStudentDashboard(uid: string) {
@@ -16,9 +24,37 @@ export async function getStudentDashboard(uid: string) {
     ORDER BY sub.semester_level DESC, sub.name
   `, [uid]);
 
+  const [[statusCounts]] = await pool.query<any[]>(`
+    SELECT
+      SUM(CASE WHEN status = 'KT' THEN 1 ELSE 0 END) AS kt_count,
+      SUM(CASE WHEN status = 'SUPPLI' THEN 1 ELSE 0 END) AS suppli_count
+    FROM student_subject_record
+    WHERE student_uid = ?
+  `, [uid]);
+
   const aicte = await getAICTETotal(uid);
 
-  return { student, subjects, aicte_total_points: aicte };
+  const ktCount = Number(statusCounts?.kt_count || 0);
+  const suppliCount = Number(statusCounts?.suppli_count || 0);
+  const hasKt = ktCount > 0;
+  const hasSuppli = suppliCount > 0;
+  const yearBack = isYearBack(student.academic_year, Number(student.current_semester));
+
+  const progressionStatus = {
+    has_kt: hasKt,
+    has_suppli: hasSuppli,
+    is_year_back: yearBack,
+    kt_count: ktCount,
+    suppli_count: suppliCount,
+    promotion_blocked: hasKt || hasSuppli,
+    dashboard_flag: yearBack
+      ? 'YEAR_BACK_ATTENTION'
+      : hasKt || hasSuppli
+      ? 'BACKLOG_ATTENTION'
+      : 'ON_TRACK',
+  };
+
+  return { student, progression_status: progressionStatus, subjects, aicte_total_points: aicte };
 }
 
 export async function getAICTETotal(uid: string): Promise<number> {

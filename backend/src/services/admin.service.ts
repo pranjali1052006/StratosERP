@@ -3,6 +3,38 @@ import bcrypt from 'bcryptjs';
 import { parse } from 'csv-parse/sync';
 import { SemesterType } from '../types';
 
+type AcademicYearBucket = '1st' | '2nd' | '3rd' | '4th';
+
+const YEAR_ORDER: AcademicYearBucket[] = ['1st', '2nd', '3rd', '4th'];
+
+const ODD_SEM_BY_YEAR: Record<AcademicYearBucket, number> = {
+  '1st': 1,
+  '2nd': 3,
+  '3rd': 5,
+  '4th': 7,
+};
+
+const EVEN_SEM_BY_YEAR: Record<AcademicYearBucket, number> = {
+  '1st': 2,
+  '2nd': 4,
+  '3rd': 6,
+  '4th': 8,
+};
+
+const NEXT_YEAR: Partial<Record<AcademicYearBucket, AcademicYearBucket>> = {
+  '1st': '2nd',
+  '2nd': '3rd',
+  '3rd': '4th',
+};
+
+function isYearBack(academicYear: string, currentSemester: number): boolean {
+  if (academicYear === '1st') return ![1, 2].includes(currentSemester);
+  if (academicYear === '2nd') return ![3, 4].includes(currentSemester);
+  if (academicYear === '3rd') return ![5, 6].includes(currentSemester);
+  if (academicYear === '4th') return ![7, 8].includes(currentSemester);
+  return false;
+}
+
 // ── Global Config ────────────────────────────────────────────
 
 export async function getGlobalConfig() {
@@ -164,6 +196,149 @@ export async function triggerBatchProgression(): Promise<{ progressed: number; a
 
     await conn.commit();
     return { progressed, alumniTransitions };
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
+export async function getSemesterProgressionOverview() {
+  const config = await getGlobalConfig();
+  const activeSemesterType = (config?.active_semester_type as SemesterType) || 'ODD';
+
+  const [rows] = await pool.query<any[]>(`
+    SELECT s.uid, s.academic_year, s.current_semester,
+           CASE WHEN EXISTS (
+             SELECT 1
+             FROM student_subject_record ssr
+             WHERE ssr.student_uid = s.uid
+               AND ssr.status IN ('KT', 'SUPPLI')
+           ) THEN 1 ELSE 0 END AS has_backlog
+    FROM student s
+    WHERE s.academic_year IN ('1st', '2nd', '3rd', '4th')
+  `);
+
+  const years = YEAR_ORDER.map((year) => {
+    const oddSemester = ODD_SEM_BY_YEAR[year];
+    const evenSemester = EVEN_SEM_BY_YEAR[year];
+
+    const oddStudents = rows.filter((row) => row.academic_year === year && Number(row.current_semester) === oddSemester);
+    const evenStudents = rows.filter((row) => row.academic_year === year && Number(row.current_semester) === evenSemester);
+    const yearStudents = rows.filter((row) => row.academic_year === year);
+
+    const oddBlocked = oddStudents.filter((row) => Number(row.has_backlog) === 1).length;
+    const evenBlocked = evenStudents.filter((row) => Number(row.has_backlog) === 1).length;
+    const yearBackCount = yearStudents.filter((row) => isYearBack(row.academic_year, Number(row.current_semester))).length;
+
+    let nextActionLabel = 'Promote to Even Semester';
+    if (activeSemesterType === 'EVEN') {
+      nextActionLabel = year === '4th' ? 'Move to Alumni' : 'Promote to Next Year';
+    }
+
+    return {
+      academic_year: year,
+      odd_semester: oddSemester,
+      even_semester: evenSemester,
+      odd_strength: oddStudents.length,
+      even_strength: evenStudents.length,
+      odd_blocked: oddBlocked,
+      even_blocked: evenBlocked,
+      year_back_count: yearBackCount,
+      next_action_label: nextActionLabel,
+    };
+  });
+
+  return {
+    active_semester_type: activeSemesterType,
+    years,
+  };
+}
+
+export async function promoteAcademicYear(
+  academicYear: AcademicYearBucket,
+  semesterType: SemesterType
+): Promise<{
+  academic_year: AcademicYearBucket;
+  semester_type: SemesterType;
+  targeted_semester: number;
+  progressed: number;
+  alumniTransitions: number;
+  blockedSkipped: number;
+  yearBackSkipped: number;
+}> {
+  const targetedSemester = semesterType === 'ODD'
+    ? ODD_SEM_BY_YEAR[academicYear]
+    : EVEN_SEM_BY_YEAR[academicYear];
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [targetRows] = await conn.query<any[]>(`
+      SELECT s.uid, s.academic_year, s.current_semester,
+             CASE WHEN EXISTS (
+               SELECT 1
+               FROM student_subject_record ssr
+               WHERE ssr.student_uid = s.uid
+                 AND ssr.status IN ('KT', 'SUPPLI')
+             ) THEN 1 ELSE 0 END AS has_backlog
+      FROM student s
+      WHERE s.academic_year = ?
+        AND s.academic_year != 'Alumni'
+    `, [academicYear]);
+
+    const inTargetSemester = targetRows.filter((row) => Number(row.current_semester) === targetedSemester);
+    const blockedSkipped = inTargetSemester.filter((row) => Number(row.has_backlog) === 1).length;
+    const eligible = inTargetSemester.filter((row) => Number(row.has_backlog) === 0);
+    const yearBackSkipped = targetRows.filter((row) => Number(row.current_semester) !== targetedSemester).length;
+
+    let progressed = 0;
+    let alumniTransitions = 0;
+
+    for (const student of eligible) {
+      const currentSemester = Number(student.current_semester);
+
+      if (semesterType === 'ODD') {
+        await conn.query(
+          'UPDATE student SET current_semester = ? WHERE uid = ?',
+          [currentSemester + 1, student.uid]
+        );
+        progressed++;
+        continue;
+      }
+
+      if (currentSemester === 8) {
+        await conn.query(
+          "UPDATE student SET academic_year = 'Alumni', current_semester = 8 WHERE uid = ?",
+          [student.uid]
+        );
+        alumniTransitions++;
+        continue;
+      }
+
+      const nextYear = NEXT_YEAR[academicYear];
+      if (!nextYear) continue;
+
+      await conn.query(
+        'UPDATE student SET current_semester = ?, academic_year = ? WHERE uid = ?',
+        [currentSemester + 1, nextYear, student.uid]
+      );
+      progressed++;
+    }
+
+    await conn.commit();
+
+    return {
+      academic_year: academicYear,
+      semester_type: semesterType,
+      targeted_semester: targetedSemester,
+      progressed,
+      alumniTransitions,
+      blockedSkipped,
+      yearBackSkipped,
+    };
   } catch (err) {
     await conn.rollback();
     throw err;

@@ -18,6 +18,8 @@ router.post('/ingest/timetable', adminCtrl.csvUpload, adminCtrl.ingestTimetable)
 
 // Batch Progression
 router.post('/batch-progression', adminCtrl.triggerBatchProgression);
+router.get('/batch-progression/status', adminCtrl.getBatchProgressionStatus);
+router.post('/batch-progression/promote-year', adminCtrl.promoteAcademicYear);
 
 // Exam & Invigilation
 router.post('/exam-seating', adminCtrl.generateExamSeating);

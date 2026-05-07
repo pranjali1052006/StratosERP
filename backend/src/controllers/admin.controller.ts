@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import * as adminService from '../services/admin.service';
 import * as geminiService from '../services/gemini.service';
 import multer from 'multer';
+import { SemesterType } from '../types';
 
 const upload = multer({ storage: multer.memoryStorage() });
 export const csvUpload = upload.single('file');
@@ -55,6 +56,31 @@ export async function ingestTimetable(req: Request, res: Response): Promise<void
 export async function triggerBatchProgression(req: Request, res: Response): Promise<void> {
   const result = await adminService.triggerBatchProgression();
   res.json({ success: true, message: 'Batch progression triggered.', data: result });
+}
+
+export async function getBatchProgressionStatus(req: Request, res: Response): Promise<void> {
+  const data = await adminService.getSemesterProgressionOverview();
+  res.json({ success: true, data });
+}
+
+export async function promoteAcademicYear(req: Request, res: Response): Promise<void> {
+  const { academic_year, semester_type } = req.body as {
+    academic_year?: '1st' | '2nd' | '3rd' | '4th';
+    semester_type?: SemesterType;
+  };
+
+  if (!academic_year || !['1st', '2nd', '3rd', '4th'].includes(academic_year)) {
+    res.status(400).json({ success: false, message: 'academic_year must be one of: 1st, 2nd, 3rd, 4th.' });
+    return;
+  }
+
+  if (!semester_type || !['ODD', 'EVEN'].includes(semester_type)) {
+    res.status(400).json({ success: false, message: 'semester_type must be ODD or EVEN.' });
+    return;
+  }
+
+  const data = await adminService.promoteAcademicYear(academic_year, semester_type);
+  res.json({ success: true, message: 'Academic year progression completed.', data });
 }
 
 // ── Exam Seating ─────────────────────────────────────────────

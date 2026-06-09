@@ -1,6 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import dotenv from 'dotenv';
-import { generateAreasOfImprovement } from '../services/gemini.service';
 
 dotenv.config();
 
@@ -13,4 +12,3 @@ export function getGeminiModel() {
 }
 
 export default genAI;
-

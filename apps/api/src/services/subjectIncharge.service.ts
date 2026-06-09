@@ -1,71 +1,70 @@
-import pool from '../config/database';
+import { prisma } from '@stratoserp/database';
 
 // ── Marks Management ─────────────────────────────────────────
 
 export async function upsertMarks(studentUid: string, subjectId: number, marks: number) {
-  await pool.query(`
-    INSERT INTO student_subject_record (student_uid, subject_id, status, marks)
-    VALUES (?, ?, 'Active', ?)
-    ON DUPLICATE KEY UPDATE marks = VALUES(marks)
-  `, [studentUid, subjectId, marks]);
+  await prisma.studentSubjectRecord.upsert({
+    where: { studentUid_subjectId: { studentUid, subjectId } },
+    update: { marks },
+    create: { studentUid, subjectId, status: 'Active', marks },
+  });
 }
 
 export async function upsertSuppliMarks(studentUid: string, subjectId: number, marks: number) {
-  // Update marks and set status to 'Cleared' if marks >= passing threshold (40)
   const status = marks >= 40 ? 'Cleared' : 'SUPPLI';
-  await pool.query(`
-    INSERT INTO student_subject_record (student_uid, subject_id, status, marks)
-    VALUES (?, ?, ?, ?)
-    ON DUPLICATE KEY UPDATE marks = VALUES(marks), status = VALUES(status)
-  `, [studentUid, subjectId, status, marks]);
+  await prisma.studentSubjectRecord.upsert({
+    where: { studentUid_subjectId: { studentUid, subjectId } },
+    update: { marks, status },
+    create: { studentUid, subjectId, status, marks },
+  });
 }
 
 export async function getSubjectMarks(subjectId: number) {
-  const [rows] = await pool.query<any[]>(`
-    SELECT ssr.student_uid, s.uid, s.email_id, ssr.marks, ssr.status
-    FROM student_subject_record ssr
-    JOIN student s ON ssr.student_uid = s.uid
-    WHERE ssr.subject_id = ?
-    ORDER BY s.uid
-  `, [subjectId]);
-  return rows;
+  return prisma.studentSubjectRecord.findMany({
+    where: { subjectId },
+    include: { student: { select: { uid: true, emailId: true } } },
+    orderBy: { student: { uid: 'asc' } },
+  });
 }
 
 export async function getSubjectAnalytics(subjectId: number) {
-  const [[stats]] = await pool.query<any[]>(`
-    SELECT
-      COUNT(*) AS total_enrolled,
-      AVG(marks) AS avg_marks,
-      MAX(marks) AS max_marks,
-      MIN(marks) AS min_marks,
-      SUM(CASE WHEN status = 'KT'     THEN 1 ELSE 0 END) AS kt_count,
-      SUM(CASE WHEN status = 'SUPPLI' THEN 1 ELSE 0 END) AS suppli_count,
-      SUM(CASE WHEN status = 'Cleared' THEN 1 ELSE 0 END) AS cleared_count
-    FROM student_subject_record
-    WHERE subject_id = ?
-  `, [subjectId]);
-  return stats;
+  const records = await prisma.studentSubjectRecord.findMany({
+    where: { subjectId },
+  });
+
+  const marksValues = records.filter(r => r.marks !== null).map(r => Number(r.marks));
+
+  return {
+    total_enrolled: records.length,
+    avg_marks: marksValues.length > 0 ? marksValues.reduce((a, b) => a + b, 0) / marksValues.length : null,
+    max_marks: marksValues.length > 0 ? Math.max(...marksValues) : null,
+    min_marks: marksValues.length > 0 ? Math.min(...marksValues) : null,
+    kt_count: records.filter(r => r.status === 'KT').length,
+    suppli_count: records.filter(r => r.status === 'SUPPLI').length,
+    cleared_count: records.filter(r => r.status === 'Cleared').length,
+  };
 }
 
 // ── Smart Attendance ──────────────────────────────────────────
 
 export async function getActiveSlot(facultyId: number): Promise<any> {
   const now = new Date();
-  const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const today = days[now.getDay()];
-  const currentTime = now.toTimeString().slice(0, 8);
+  const currentTime = new Date(`1970-01-01T${now.toTimeString().slice(0, 8)}`);
 
-  const [rows] = await pool.query<any[]>(`
-    SELECT ts.slot_id, ts.subject_id, s.name AS subject_name
-    FROM timetable_slot ts
-    JOIN subject s ON ts.subject_id = s.subject_id
-    WHERE ts.faculty_id = ?
-      AND ts.day_of_week = ?
-      AND ts.start_time <= ?
-      AND ts.end_time >= ?
-    LIMIT 1
-  `, [facultyId, today, currentTime, currentTime]);
-  return rows[0] || null;
+  const slot = await prisma.timetableSlot.findFirst({
+    where: {
+      facultyId,
+      dayOfWeek: today,
+      startTime: { lte: currentTime },
+      endTime: { gte: currentTime },
+    },
+    include: { subject: { select: { name: true } } },
+  });
+
+  if (!slot) return null;
+  return { slot_id: slot.slotId, subject_id: slot.subjectId, subject_name: slot.subject.name };
 }
 
 export async function markAttendance(
@@ -74,46 +73,29 @@ export async function markAttendance(
   presentUids: string[],
   absentUids: string[]
 ) {
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-
+  await prisma.$transaction(async (tx) => {
     // Ensure lecture_log exists for this slot+date
-    await conn.query(`
-      INSERT IGNORE INTO lecture_log (slot_id, execution_date) VALUES (?, ?)
-    `, [slotId, attendanceDate]);
-
-    // Process attendance: for now we store in a custom table;
-    // We flag students < 75% via a query below
-    // (Attendance is tracked per slot per day — stored in lecture_log context)
-    // For granular per-student tracking, we extend via a virtual attendance approach
-    // using student_subject_record notes, but ideally an attendance table is needed.
-    // We implement as a lecture note for now with present/absent arrays stored.
-    await conn.query(`
-      UPDATE lecture_log
-      SET additional_topics_taught = ?
-      WHERE slot_id = ? AND execution_date = ?
-    `, [JSON.stringify({ present: presentUids, absent: absentUids }), slotId, attendanceDate]);
-
-    await conn.commit();
-  } catch (err) {
-    await conn.rollback();
-    throw err;
-  } finally {
-    conn.release();
-  }
+    await tx.lectureLog.upsert({
+      where: { slotId_executionDate: { slotId, executionDate: new Date(attendanceDate) } },
+      update: {
+        additionalTopicsTaught: JSON.stringify({ present: presentUids, absent: absentUids }),
+      },
+      create: {
+        slotId,
+        executionDate: new Date(attendanceDate),
+        additionalTopicsTaught: JSON.stringify({ present: presentUids, absent: absentUids }),
+      },
+    });
+  });
 }
 
 export async function getAttendanceForSlot(slotId: number, date: string) {
-  const [rows] = await pool.query<any[]>(`
-    SELECT additional_topics_taught AS attendance_data
-    FROM lecture_log
-    WHERE slot_id = ? AND execution_date = ?
-    LIMIT 1
-  `, [slotId, date]);
+  const log = await prisma.lectureLog.findUnique({
+    where: { slotId_executionDate: { slotId, executionDate: new Date(date) } },
+  });
 
-  if (!rows.length || !rows[0].attendance_data) return null;
-  return JSON.parse(rows[0].attendance_data);
+  if (!log?.additionalTopicsTaught) return null;
+  return JSON.parse(log.additionalTopicsTaught);
 }
 
 // ── Lecture Logs ──────────────────────────────────────────────
@@ -121,35 +103,46 @@ export async function getAttendanceForSlot(slotId: number, date: string) {
 export async function logLecture(data: {
   slot_id: number; syllabus_topics_taught: string; additional_topics_taught?: string; execution_date: string;
 }) {
-  await pool.query(`
-    INSERT INTO lecture_log (slot_id, syllabus_topics_taught, additional_topics_taught, execution_date)
-    VALUES (?, ?, ?, ?)
-    ON DUPLICATE KEY UPDATE
-      syllabus_topics_taught = VALUES(syllabus_topics_taught),
-      additional_topics_taught = VALUES(additional_topics_taught)
-  `, [data.slot_id, data.syllabus_topics_taught, data.additional_topics_taught || null, data.execution_date]);
+  await prisma.lectureLog.upsert({
+    where: { slotId_executionDate: { slotId: data.slot_id, executionDate: new Date(data.execution_date) } },
+    update: {
+      syllabusTopicsTaught: data.syllabus_topics_taught,
+      additionalTopicsTaught: data.additional_topics_taught || null,
+    },
+    create: {
+      slotId: data.slot_id,
+      syllabusTopicsTaught: data.syllabus_topics_taught,
+      additionalTopicsTaught: data.additional_topics_taught || null,
+      executionDate: new Date(data.execution_date),
+    },
+  });
 }
 
 export async function getLectureLogs(subjectId: number) {
-  const [rows] = await pool.query<any[]>(`
-    SELECT ll.log_id, ll.execution_date, ll.syllabus_topics_taught, ll.additional_topics_taught,
-           ts.day_of_week, ts.start_time, ts.end_time
-    FROM lecture_log ll
-    JOIN timetable_slot ts ON ll.slot_id = ts.slot_id
-    WHERE ts.subject_id = ?
-    ORDER BY ll.execution_date DESC
-  `, [subjectId]);
-  return rows;
+  return prisma.lectureLog.findMany({
+    where: { slot: { subjectId } },
+    include: {
+      slot: {
+        select: { dayOfWeek: true, startTime: true, endTime: true },
+      },
+    },
+    orderBy: { executionDate: 'desc' },
+  });
 }
 
 // ── Faculty's Subjects ────────────────────────────────────────
 
 export async function getFacultySubjects(facultyId: number) {
-  const [rows] = await pool.query<any[]>(`
-    SELECT DISTINCT s.subject_id, s.name, s.semester_level, s.has_lab
-    FROM timetable_slot ts
-    JOIN subject s ON ts.subject_id = s.subject_id
-    WHERE ts.faculty_id = ?
-  `, [facultyId]);
-  return rows;
+  const slots = await prisma.timetableSlot.findMany({
+    where: { facultyId },
+    include: { subject: true },
+    distinct: ['subjectId'],
+  });
+
+  return slots.map(s => ({
+    subject_id: s.subject.subjectId,
+    name: s.subject.name,
+    semester_level: s.subject.semesterLevel,
+    has_lab: s.subject.hasLab,
+  }));
 }

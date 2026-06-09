@@ -2,7 +2,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import express from 'express';
-import { ensureAuthSchema, testConnection } from './config/database';
+import { testConnection, ensureAuthSchema, disconnect } from './config/database';
 import { ensureBucketsExist } from './config/minio';
 
 // Route imports
@@ -51,9 +51,19 @@ app.use((_req, res) => {
     if (!minioReady) {
       console.warn('[Server] MinIO unavailable at startup. File storage endpoints will return 503 until MinIO is restored.');
     }
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`[Server] StratosERP API running on port ${PORT}`);
     });
+
+    // Graceful shutdown
+    const shutdown = async () => {
+      console.log('[Server] Shutting down...');
+      await disconnect();
+      server.close();
+      process.exit(0);
+    };
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
   } catch (err) {
     console.error('[Server] Failed to start:', err);
     process.exit(1);

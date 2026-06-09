@@ -1,138 +1,167 @@
-import pool from '../config/database';
+import { prisma } from '@stratoserp/database';
 
 // ── Faculty Management ────────────────────────────────────────
 
 export async function assignSubjectToFaculty(subjectId: number, facultyId: number) {
-  // Insert a timetable slot assignment (HOD level assignment)
-  await pool.query(
-    'UPDATE timetable_slot SET faculty_id = ? WHERE subject_id = ?',
-    [facultyId, subjectId]
-  );
+  await prisma.timetableSlot.updateMany({
+    where: { subjectId },
+    data: { facultyId },
+  });
 }
 
 export async function assignFacultyRole(facultyId: number, role: string) {
   const valid = ['Class Incharge', 'Subject Incharge', 'TG'];
   if (!valid.includes(role)) throw new Error('Invalid role designation.');
-  await pool.query('UPDATE faculty SET designation_role = ? WHERE faculty_id = ?', [role, facultyId]);
+  await prisma.faculty.update({
+    where: { facultyId },
+    data: { designationRole: role },
+  });
 }
 
 export async function listFacultyByDepartment() {
-  const [rows] = await pool.query<any[]>(
-    'SELECT faculty_id, name, email_id, designation_role, is_hod FROM faculty'
-  );
-  return rows;
+  return prisma.faculty.findMany({
+    select: { facultyId: true, name: true, emailId: true, designationRole: true, isHod: true },
+  });
 }
 
 // ── Branch Analytics ─────────────────────────────────────────
 
 export async function getBranchAnalytics() {
-  const [[studentStats]] = await pool.query<any[]>(`
-    SELECT
-      COUNT(DISTINCT s.uid)                    AS total_students,
-      AVG(ssr.marks)                           AS avg_marks,
-      SUM(CASE WHEN ssr.status = 'KT'     THEN 1 ELSE 0 END) AS total_kt,
-      SUM(CASE WHEN ssr.status = 'SUPPLI' THEN 1 ELSE 0 END) AS total_suppli
-    FROM student s
-    LEFT JOIN student_subject_record ssr ON s.uid = ssr.student_uid
-    WHERE s.academic_year != 'Alumni'
-  `);
+  const students = await prisma.student.findMany({
+    where: { academicYear: { not: 'Alumni' } },
+    include: { subjectRecords: true },
+  });
 
-  const [semesterDist] = await pool.query<any[]>(`
-    SELECT current_semester, COUNT(*) AS count
-    FROM student
-    WHERE academic_year != 'Alumni'
-    GROUP BY current_semester
-    ORDER BY current_semester
-  `);
+  let totalMarks = 0;
+  let marksCount = 0;
+  let totalKt = 0;
+  let totalSuppli = 0;
 
-  return { summary: studentStats, semester_distribution: semesterDist };
+  for (const s of students) {
+    for (const r of s.subjectRecords) {
+      if (r.marks !== null) {
+        totalMarks += Number(r.marks);
+        marksCount++;
+      }
+      if (r.status === 'KT') totalKt++;
+      if (r.status === 'SUPPLI') totalSuppli++;
+    }
+  }
+
+  const semesterDist = await prisma.student.groupBy({
+    by: ['currentSemester'],
+    where: { academicYear: { not: 'Alumni' } },
+    _count: true,
+    orderBy: { currentSemester: 'asc' },
+  });
+
+  return {
+    summary: {
+      total_students: students.length,
+      avg_marks: marksCount > 0 ? totalMarks / marksCount : null,
+      total_kt: totalKt,
+      total_suppli: totalSuppli,
+    },
+    semester_distribution: semesterDist.map(d => ({
+      current_semester: d.currentSemester,
+      count: d._count,
+    })),
+  };
 }
 
 export async function getStudentDashboard(uid: string) {
-  const [rows] = await pool.query<any[]>('SELECT * FROM student_dashboard WHERE student_uid = ?', [uid]);
-  return rows;
+  return prisma.studentSubjectRecord.findMany({
+    where: { studentUid: uid },
+    include: {
+      student: true,
+      subject: true,
+    },
+  });
 }
 
 export async function getAlumniData() {
-  const [rows] = await pool.query<any[]>(
-    "SELECT uid, email_id, academic_year FROM student WHERE academic_year = 'Alumni' ORDER BY uid"
-  );
-  return rows;
+  return prisma.student.findMany({
+    where: { academicYear: 'Alumni' },
+    select: { uid: true, emailId: true, academicYear: true },
+    orderBy: { uid: 'asc' },
+  });
 }
 
 // ── Grievance Escalation ──────────────────────────────────────
 
 export async function getEscalatedGrievances() {
-  const [rows] = await pool.query<any[]>(`
-    SELECT gt.*, f.name AS assigned_to
-    FROM grievance_ticket gt
-    LEFT JOIN faculty f ON gt.assigned_authority_id = f.faculty_id
-    WHERE gt.status = 'Escalated'
-    ORDER BY gt.created_at DESC
-  `);
-  return rows;
+  return prisma.grievanceTicket.findMany({
+    where: { status: 'Escalated' },
+    include: { authority: { select: { name: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
 }
 
 export async function resolveGrievance(ticketId: number) {
-  await pool.query("UPDATE grievance_ticket SET status = 'Resolved' WHERE ticket_id = ?", [ticketId]);
+  await prisma.grievanceTicket.update({
+    where: { ticketId },
+    data: { status: 'Resolved' },
+  });
 }
 
 // ── Leave Management ─────────────────────────────────────────
 
 export async function getLeaveSubstitutionLog() {
-  const [rows] = await pool.query<any[]>(`
-    SELECT ls.*, f1.name AS absent_faculty, f2.name AS substitute_faculty
-    FROM leave_substitution ls
-    JOIN faculty f1 ON ls.absent_faculty_id = f1.faculty_id
-    JOIN faculty f2 ON ls.substitute_faculty_id = f2.faculty_id
-    ORDER BY ls.leave_date DESC
-  `);
-  return rows;
+  return prisma.leaveSubstitution.findMany({
+    include: {
+      absentFaculty: { select: { name: true } },
+      substituteFaculty: { select: { name: true } },
+    },
+    orderBy: { leaveDate: 'desc' },
+  });
 }
 
 export async function scheduleLeave(data: {
   absent_faculty_id: number; substitute_faculty_id: number; leave_date: string; type: string;
 }) {
-  // Business Rule: substitute must not have a timetable_slot on leave_date (app-layer check)
-  const [conflicts] = await pool.query<any[]>(`
-    SELECT ts.slot_id FROM timetable_slot ts
-    WHERE ts.faculty_id = ?
-      AND ? IN ('Monday','Tuesday','Wednesday','Thursday','Friday','Saturday')
-  `, [data.substitute_faculty_id, new Date(data.leave_date).toLocaleDateString('en-US', { weekday: 'long' })]);
+  const leaveDate = new Date(data.leave_date);
+  const dayOfWeek = leaveDate.toLocaleDateString('en-US', { weekday: 'long' });
+
+  const conflicts = await prisma.timetableSlot.findMany({
+    where: { facultyId: data.substitute_faculty_id, dayOfWeek },
+  });
 
   if (conflicts.length) {
     throw new Error('Substitute faculty has a timetable conflict on the specified date.');
   }
 
-  const [result] = await pool.query<any>(
-    'INSERT INTO leave_substitution (absent_faculty_id, substitute_faculty_id, leave_date, type) VALUES (?, ?, ?, ?)',
-    [data.absent_faculty_id, data.substitute_faculty_id, data.leave_date, data.type]
-  );
-  return result.insertId;
+  const leave = await prisma.leaveSubstitution.create({
+    data: {
+      absentFacultyId: data.absent_faculty_id,
+      substituteFacultyId: data.substitute_faculty_id,
+      leaveDate,
+      type: data.type,
+    },
+  });
+  return leave.leaveId;
 }
 
 // ── Notice Board ─────────────────────────────────────────────
 
 export async function createBranchNotice(title: string, aiTags?: string[]) {
-  const [result] = await pool.query<any>(
-    'INSERT INTO notice_board (title, target_audience, ai_filter_tags) VALUES (?, ?, ?)',
-    [title, 'BRANCH', JSON.stringify(aiTags || [])]
-  );
-  return result.insertId;
+  const notice = await prisma.noticeBoard.create({
+    data: { title, targetAudience: 'BRANCH', aiFilterTags: aiTags || [] },
+  });
+  return notice.noticeId;
 }
 
 export async function getBranchNotices() {
-  const [rows] = await pool.query<any[]>(
-    "SELECT * FROM notice_board WHERE target_audience = 'BRANCH' ORDER BY created_at DESC"
-  );
-  return rows;
+  return prisma.noticeBoard.findMany({
+    where: { targetAudience: 'BRANCH' },
+    orderBy: { createdAt: 'desc' },
+  });
 }
 
 // ── Study Materials Oversight ─────────────────────────────────
 
 export async function getSubjectsList() {
-  const [rows] = await pool.query<any[]>(
-    'SELECT subject_id, name, semester_level, has_lab FROM subject ORDER BY semester_level, name'
-  );
-  return rows;
+  return prisma.subject.findMany({
+    select: { subjectId: true, name: true, semesterLevel: true, hasLab: true },
+    orderBy: [{ semesterLevel: 'asc' }, { name: 'asc' }],
+  });
 }

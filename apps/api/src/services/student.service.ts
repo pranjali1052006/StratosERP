@@ -1,4 +1,4 @@
-import pool from '../config/database';
+import { prisma } from '@stratoserp/database';
 
 function isYearBack(academicYear: string, currentSemester: number): boolean {
   if (academicYear === '1st') return ![1, 2].includes(currentSemester);
@@ -11,34 +11,25 @@ function isYearBack(academicYear: string, currentSemester: number): boolean {
 // ── Dashboard ─────────────────────────────────────────────────
 
 export async function getStudentDashboard(uid: string) {
-  const [[student]] = await pool.query<any[]>(`
-    SELECT uid, email_id, current_semester, academic_year FROM student WHERE uid = ?
-  `, [uid]);
+  const student = await prisma.student.findUnique({
+    where: { uid },
+    select: { uid: true, emailId: true, currentSemester: true, academicYear: true },
+  });
   if (!student) return null;
 
-  const [subjects] = await pool.query<any[]>(`
-    SELECT sub.subject_id, sub.name, sub.semester_level, sub.has_lab, ssr.marks, ssr.status
-    FROM student_subject_record ssr
-    JOIN subject sub ON ssr.subject_id = sub.subject_id
-    WHERE ssr.student_uid = ?
-    ORDER BY sub.semester_level DESC, sub.name
-  `, [uid]);
+  const subjects = await prisma.studentSubjectRecord.findMany({
+    where: { studentUid: uid },
+    include: { subject: true },
+    orderBy: [{ subject: { semesterLevel: 'desc' } }, { subject: { name: 'asc' } }],
+  });
 
-  const [[statusCounts]] = await pool.query<any[]>(`
-    SELECT
-      SUM(CASE WHEN status = 'KT' THEN 1 ELSE 0 END) AS kt_count,
-      SUM(CASE WHEN status = 'SUPPLI' THEN 1 ELSE 0 END) AS suppli_count
-    FROM student_subject_record
-    WHERE student_uid = ?
-  `, [uid]);
-
-  const aicte = await getAICTETotal(uid);
-
-  const ktCount = Number(statusCounts?.kt_count || 0);
-  const suppliCount = Number(statusCounts?.suppli_count || 0);
+  const ktCount = subjects.filter(s => s.status === 'KT').length;
+  const suppliCount = subjects.filter(s => s.status === 'SUPPLI').length;
   const hasKt = ktCount > 0;
   const hasSuppli = suppliCount > 0;
-  const yearBack = isYearBack(student.academic_year, Number(student.current_semester));
+  const yearBack = isYearBack(student.academicYear, student.currentSemester);
+
+  const aicte = await getAICTETotal(uid);
 
   const progressionStatus = {
     has_kt: hasKt,
@@ -54,52 +45,65 @@ export async function getStudentDashboard(uid: string) {
       : 'ON_TRACK',
   };
 
-  return { student, progression_status: progressionStatus, subjects, aicte_total_points: aicte };
+  return {
+    student,
+    progression_status: progressionStatus,
+    subjects: subjects.map(s => ({
+      subject_id: s.subject.subjectId,
+      name: s.subject.name,
+      semester_level: s.subject.semesterLevel,
+      has_lab: s.subject.hasLab,
+      marks: s.marks,
+      status: s.status,
+    })),
+    aicte_total_points: aicte,
+  };
 }
 
 export async function getAICTETotal(uid: string): Promise<number> {
-  const [[{ total }]] = await pool.query<any[]>(
-    'SELECT COALESCE(SUM(points), 0) AS total FROM aicte_points WHERE student_uid = ?',
-    [uid]
-  );
-  return total;
+  const result = await prisma.aictePoints.aggregate({
+    where: { studentUid: uid },
+    _sum: { points: true },
+  });
+  return result._sum.points ?? 0;
 }
 
 // ── Timetable & Live Faculty Locator ──────────────────────────
 
 export async function getTimetable(uid: string) {
-  const [[student]] = await pool.query<any[]>('SELECT current_semester FROM student WHERE uid = ?', [uid]);
+  const student = await prisma.student.findUnique({
+    where: { uid },
+    select: { currentSemester: true },
+  });
   if (!student) return null;
 
-  const [rows] = await pool.query<any[]>(`
-    SELECT ts.slot_id, ts.day_of_week, ts.start_time, ts.end_time,
-           s.name AS subject_name, f.name AS faculty_name
-    FROM timetable_slot ts
-    JOIN subject s ON ts.subject_id = s.subject_id
-    JOIN faculty f ON ts.faculty_id = f.faculty_id
-    WHERE s.semester_level = ?
-    ORDER BY FIELD(ts.day_of_week,'Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'), ts.start_time
-  `, [student.current_semester]);
-  return rows;
+  return prisma.timetableSlot.findMany({
+    where: { subject: { semesterLevel: student.currentSemester } },
+    include: {
+      subject: { select: { name: true } },
+      faculty: { select: { name: true } },
+    },
+    orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
+  });
 }
 
 export async function liveFacultyLocator() {
-  const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const now = new Date();
   const today = days[now.getDay()];
-  const currentTime = now.toTimeString().slice(0, 8);
+  const currentTime = new Date(`1970-01-01T${now.toTimeString().slice(0, 8)}`);
 
-  const [rows] = await pool.query<any[]>(`
-    SELECT ts.slot_id, ts.start_time, ts.end_time, ts.day_of_week,
-           s.name AS subject_name, f.faculty_id, f.name AS faculty_name
-    FROM timetable_slot ts
-    JOIN subject s ON ts.subject_id = s.subject_id
-    JOIN faculty f ON ts.faculty_id = f.faculty_id
-    WHERE ts.day_of_week = ?
-      AND ts.start_time <= ?
-      AND ts.end_time >= ?
-  `, [today, currentTime, currentTime]);
-  return rows;
+  return prisma.timetableSlot.findMany({
+    where: {
+      dayOfWeek: today,
+      startTime: { lte: currentTime },
+      endTime: { gte: currentTime },
+    },
+    include: {
+      subject: { select: { name: true } },
+      faculty: { select: { facultyId: true, name: true } },
+    },
+  });
 }
 
 // ── Grievance Portal ──────────────────────────────────────────
@@ -107,52 +111,50 @@ export async function liveFacultyLocator() {
 export async function submitGrievance(data: {
   student_uid: string; category: string; description: string; evidence?: string;
 }) {
-  const [result] = await pool.query<any>(`
-    INSERT INTO grievance_ticket (student_uid, category, description, evidence, status)
-    VALUES (?, ?, ?, ?, 'Open')
-  `, [data.student_uid, data.category, data.description, data.evidence || null]);
-  return result.insertId;
+  const ticket = await prisma.grievanceTicket.create({
+    data: {
+      studentUid: data.student_uid,
+      category: data.category,
+      description: data.description,
+      evidence: data.evidence || null,
+      status: 'Open',
+    },
+  });
+  return ticket.ticketId;
 }
 
 export async function getMyGrievances(uid: string) {
-  const [rows] = await pool.query<any[]>(`
-    SELECT gt.ticket_id, gt.category, gt.description, gt.status,
-           gt.created_at, gt.updated_at, f.name AS assigned_to
-    FROM grievance_ticket gt
-    LEFT JOIN faculty f ON gt.assigned_authority_id = f.faculty_id
-    WHERE gt.student_uid = ?
-    ORDER BY gt.created_at DESC
-  `, [uid]);
-  return rows;
+  return prisma.grievanceTicket.findMany({
+    where: { studentUid: uid },
+    include: { authority: { select: { name: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
 }
 
 // ── Notice Board ──────────────────────────────────────────────
 
 export async function getNotices() {
-  const [rows] = await pool.query<any[]>(
-    "SELECT * FROM notice_board ORDER BY created_at DESC LIMIT 20"
-  );
-  return rows;
+  return prisma.noticeBoard.findMany({
+    orderBy: { createdAt: 'desc' },
+    take: 20,
+  });
 }
 
 // ── Study Materials ───────────────────────────────────────────
 
 export async function getStudyMaterials(subjectId: number) {
-  // Materials are stored in MinIO; we return object metadata from a materials_index
-  // For simplicity, we query a virtual index or return MinIO listing
   return { subject_id: subjectId, note: 'Use /api/student/materials/:subject_id/download endpoint with object_name param.' };
 }
 
 // ── Lab Marks ─────────────────────────────────────────────────
 
 export async function getLabMarks(uid: string) {
-  const [rows] = await pool.query<any[]>(`
-    SELECT lm.*, e.title AS experiment_title, s.name AS subject_name
-    FROM lab_marks lm
-    JOIN experiment e ON lm.experiment_id = e.experiment_id
-    JOIN subject s ON lm.subject_id = s.subject_id
-    WHERE lm.student_uid = ?
-    ORDER BY s.name, e.experiment_no
-  `, [uid]);
-  return rows;
+  return prisma.labMark.findMany({
+    where: { studentUid: uid },
+    include: {
+      experiment: { select: { title: true } },
+      subject: { select: { name: true } },
+    },
+    orderBy: [{ subject: { name: 'asc' } }, { experiment: { experimentNo: 'asc' } }],
+  });
 }

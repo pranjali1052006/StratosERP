@@ -12,6 +12,7 @@ stratoserp/
 │   ├── web/             → Next.js 16 frontend (React 19, Tailwind v4)
 │   └── api/             → Express.js backend (Node.js, TypeScript)
 ├── packages/
+│   ├── database/        → Prisma ORM schema, client, and migrations
 │   ├── shared/          → Shared types, constants, and utilities
 │   └── eslint-config/   → Shared ESLint configuration
 ├── Database/            → SQL schema and migration files
@@ -50,7 +51,23 @@ cp apps/api/.env.example apps/api/.env
 cp apps/web/.env.example apps/web/.env
 ```
 
-Edit `apps/api/.env` with your MySQL, MinIO, and Gemini credentials.
+Edit `apps/api/.env` — set `DATABASE_URL` to your MySQL connection string:
+```
+DATABASE_URL="mysql://root:password@localhost:3306/StratosERP"
+```
+
+### Database Setup (Prisma)
+
+```bash
+# Push schema to your MySQL database
+npm run db:push --workspace=@stratoserp/database
+
+# Generate Prisma client (auto-runs on install)
+npm run db:generate --workspace=@stratoserp/database
+
+# Open Prisma Studio (visual DB browser)
+npm run db:studio --workspace=@stratoserp/database
+```
 
 ### Development
 
@@ -98,6 +115,7 @@ npm run clean
 | ------------- | ---------------------------------- |
 | Frontend      | Next.js 16, React 19, Tailwind v4  |
 | Backend       | Node.js, Express, TypeScript       |
+| ORM           | Prisma (type-safe database client) |
 | Database      | MySQL 8.0+                         |
 | Object Storage| MinIO (S3-compatible)              |
 | AI/ML         | Google Gemini API                   |

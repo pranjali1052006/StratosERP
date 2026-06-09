@@ -1,0 +1,370 @@
+// =============================================================
+// StratosERP – Prisma Schema
+// Database: MySQL 8.0+ (StratosERP)
+// =============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================
+// TABLE 1: SUBJECT
+// =============================================================
+model Subject {
+  subjectId      Int     @id @default(autoincrement()) @map("subject_id")
+  name           String  @db.VarChar(100)
+  semesterLevel  Int     @map("semester_level")
+  hasLab         Boolean @default(false) @map("has_lab")
+  labMarksWeight Int?    @map("lab_marks_weight")
+
+  // Relations
+  studentRecords     StudentSubjectRecord[]
+  timetableSlots     TimetableSlot[]
+  labBatches         LabBatch[]
+  experiments        Experiment[]
+  labSessions        LabSession[]
+  labMarks           LabMark[]
+
+  @@map("subject")
+}
+
+// =============================================================
+// TABLE 2: GLOBAL_CONFIG
+// =============================================================
+model GlobalConfig {
+  configId            Int    @id @default(autoincrement()) @map("config_id")
+  activeSemesterType  String @map("active_semester_type") @db.VarChar(4)
+  startDate           DateTime @map("start_date") @db.Date
+  endDate             DateTime @map("end_date") @db.Date
+
+  @@map("global_config")
+}
+
+// =============================================================
+// TABLE 3: FACULTY
+// =============================================================
+model Faculty {
+  facultyId       Int     @id @default(autoincrement()) @map("faculty_id")
+  name            String  @db.VarChar(100)
+  emailId         String  @unique @map("email_id") @db.VarChar(150)
+  designationRole String  @map("designation_role") @db.VarChar(30)
+  passwordHash    String  @default("") @map("password_hash") @db.VarChar(255)
+  isHod           Boolean @default(false) @map("is_hod")
+
+  // Relations
+  timetableSlots           TimetableSlot[]
+  grievancesAssigned       GrievanceTicket[]
+  leaveAbsences            LeaveSubstitution[] @relation("AbsentFaculty")
+  leaveSubstitutions       LeaveSubstitution[] @relation("SubstituteFaculty")
+  labBatches               LabBatch[]
+  labSessionsAssigned      LabSession[]        @relation("AssignedFaculty")
+  labMarksUpdated          LabMark[]
+  tgAssignments            TgAssignment[]
+  aictePointsAwarded       AictePoints[]
+
+  @@map("faculty")
+}
+
+// =============================================================
+// TABLE 3A: ADMIN_USER
+// =============================================================
+model AdminUser {
+  adminId      Int    @id @default(autoincrement()) @map("admin_id")
+  name         String @db.VarChar(100)
+  emailId      String @unique @map("email_id") @db.VarChar(150)
+  passwordHash String @map("password_hash") @db.VarChar(255)
+
+  @@map("admin_user")
+}
+
+// =============================================================
+// TABLE 4: STUDENT
+// =============================================================
+model Student {
+  uid             String @id @db.VarChar(30)
+  emailId         String @unique @map("email_id") @db.VarChar(150)
+  currentSemester Int    @map("current_semester")
+  academicYear    String @map("academic_year") @db.VarChar(10)
+  passwordHash    String @default("") @map("password_hash") @db.VarChar(255)
+
+  // Relations
+  subjectRecords   StudentSubjectRecord[]
+  grievances       GrievanceTicket[]
+  labAttendances   LabAttendance[]
+  labMarks         LabMark[]
+  labSubmissions   LabSubmission[]
+  tgAssignments    TgAssignment[]
+  aictePoints      AictePoints[]
+
+  @@map("student")
+}
+
+// =============================================================
+// TABLE 5: STUDENT_SUBJECT_RECORD
+// =============================================================
+model StudentSubjectRecord {
+  studentUid String       @map("student_uid") @db.VarChar(30)
+  subjectId  Int          @map("subject_id")
+  status     String       @db.VarChar(10)
+  marks      Decimal?     @db.Decimal(5, 2)
+
+  student    Student      @relation(fields: [studentUid], references: [uid], onDelete: Cascade)
+  subject    Subject      @relation(fields: [subjectId], references: [subjectId], onDelete: Cascade)
+
+  @@id([studentUid, subjectId])
+  @@index([studentUid], map: "idx_ssr_student")
+  @@index([subjectId], map: "idx_ssr_subject")
+  @@map("student_subject_record")
+}
+
+// =============================================================
+// TABLE 6: TIMETABLE_SLOT
+// =============================================================
+model TimetableSlot {
+  slotId    Int    @id @default(autoincrement()) @map("slot_id")
+  dayOfWeek String @map("day_of_week") @db.VarChar(10)
+  startTime DateTime @map("start_time") @db.Time(0)
+  endTime   DateTime @map("end_time") @db.Time(0)
+  subjectId Int    @map("subject_id")
+  facultyId Int    @map("faculty_id")
+
+  subject   Subject @relation(fields: [subjectId], references: [subjectId])
+  faculty   Faculty @relation(fields: [facultyId], references: [facultyId])
+  lectureLogs LectureLog[]
+
+  @@index([facultyId], map: "idx_slot_faculty")
+  @@index([subjectId], map: "idx_slot_subject")
+  @@map("timetable_slot")
+}
+
+// =============================================================
+// TABLE 7: LECTURE_LOG
+// =============================================================
+model LectureLog {
+  logId                  Int      @id @default(autoincrement()) @map("log_id")
+  slotId                 Int      @map("slot_id")
+  syllabusTopicsTaught   String?  @map("syllabus_topics_taught") @db.Text
+  additionalTopicsTaught String?  @map("additional_topics_taught") @db.Text
+  executionDate          DateTime @map("execution_date") @db.Date
+
+  slot TimetableSlot @relation(fields: [slotId], references: [slotId], onDelete: Cascade)
+
+  @@unique([slotId, executionDate], map: "uq_log_slot_date")
+  @@index([slotId], map: "idx_log_slot")
+  @@index([executionDate], map: "idx_log_date")
+  @@map("lecture_log")
+}
+
+// =============================================================
+// TABLE 8: GRIEVANCE_TICKET
+// =============================================================
+model GrievanceTicket {
+  ticketId            Int      @id @default(autoincrement()) @map("ticket_id")
+  studentUid          String   @map("student_uid") @db.VarChar(30)
+  category            String   @db.VarChar(100)
+  description         String   @db.Text
+  evidence            String?  @db.Text
+  status              String   @default("Open") @db.VarChar(15)
+  assignedAuthorityId Int?     @map("assigned_authority_id")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @default(now()) @updatedAt @map("updated_at")
+
+  student   Student  @relation(fields: [studentUid], references: [uid], onDelete: Cascade)
+  authority Faculty? @relation(fields: [assignedAuthorityId], references: [facultyId])
+
+  @@index([studentUid], map: "idx_grievance_student")
+  @@index([status], map: "idx_grievance_status")
+  @@map("grievance_ticket")
+}
+
+// =============================================================
+// TABLE 9: LEAVE_SUBSTITUTION
+// =============================================================
+model LeaveSubstitution {
+  leaveId              Int      @id @default(autoincrement()) @map("leave_id")
+  absentFacultyId      Int      @map("absent_faculty_id")
+  substituteFacultyId  Int      @map("substitute_faculty_id")
+  leaveDate            DateTime @map("leave_date") @db.Date
+  type                 String   @db.VarChar(15)
+
+  absentFaculty     Faculty @relation("AbsentFaculty", fields: [absentFacultyId], references: [facultyId])
+  substituteFaculty Faculty @relation("SubstituteFaculty", fields: [substituteFacultyId], references: [facultyId])
+
+  @@index([absentFacultyId], map: "idx_leave_absent")
+  @@index([leaveDate], map: "idx_leave_date")
+  @@map("leave_substitution")
+}
+
+// =============================================================
+// TABLE 10: NOTICE_BOARD
+// =============================================================
+model NoticeBoard {
+  noticeId       Int      @id @default(autoincrement()) @map("notice_id")
+  title          String   @db.VarChar(255)
+  targetAudience String   @map("target_audience") @db.VarChar(15)
+  aiFilterTags   Json?    @map("ai_filter_tags")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@map("notice_board")
+}
+
+// =============================================================
+// TABLE 11: LAB_BATCH
+// =============================================================
+model LabBatch {
+  batchId    Int    @id @default(autoincrement()) @map("batch_id")
+  subjectId  Int    @map("subject_id")
+  batchName  String @map("batch_name") @db.VarChar(20)
+  facultyId  Int    @map("faculty_id")
+
+  subject  Subject      @relation(fields: [subjectId], references: [subjectId], onDelete: Cascade)
+  faculty  Faculty      @relation(fields: [facultyId], references: [facultyId])
+  sessions LabSession[]
+
+  @@unique([subjectId, batchName], map: "uq_subject_batch")
+  @@map("lab_batch")
+}
+
+// =============================================================
+// TABLE 12: EXPERIMENT
+// =============================================================
+model Experiment {
+  experimentId Int    @id @default(autoincrement()) @map("experiment_id")
+  subjectId    Int    @map("subject_id")
+  experimentNo Int    @map("experiment_no")
+  title        String @db.VarChar(255)
+  maxMarks     Int    @map("max_marks")
+
+  subject     Subject         @relation(fields: [subjectId], references: [subjectId], onDelete: Cascade)
+  labMarks    LabMark[]
+  submissions LabSubmission[]
+
+  @@unique([subjectId, experimentNo], map: "uq_experiment")
+  @@map("experiment")
+}
+
+// =============================================================
+// TABLE 13: LAB_SESSION
+// =============================================================
+model LabSession {
+  sessionId          Int      @id @default(autoincrement()) @map("session_id")
+  subjectId          Int      @map("subject_id")
+  batchId            Int      @map("batch_id")
+  sessionDate        DateTime @map("session_date") @db.Date
+  assignedFacultyId  Int      @map("assigned_faculty_id")
+  originalFacultyId  Int?     @map("original_faculty_id")
+  isSubstitute       Boolean  @default(false) @map("is_substitute")
+  status             String   @default("Pending") @db.VarChar(15)
+
+  subject         Subject         @relation(fields: [subjectId], references: [subjectId])
+  batch           LabBatch        @relation(fields: [batchId], references: [batchId])
+  assignedFaculty Faculty         @relation("AssignedFaculty", fields: [assignedFacultyId], references: [facultyId])
+  attendances     LabAttendance[]
+  labMarks        LabMark[]
+
+  @@index([subjectId, sessionDate], map: "idx_lab_session_subject_date")
+  @@map("lab_session")
+}
+
+// =============================================================
+// TABLE 14: LAB_ATTENDANCE
+// =============================================================
+model LabAttendance {
+  attendanceId Int    @id @default(autoincrement()) @map("attendance_id")
+  sessionId    Int    @map("session_id")
+  studentUid   String @map("student_uid") @db.VarChar(30)
+  status       String @db.VarChar(10)
+
+  session LabSession @relation(fields: [sessionId], references: [sessionId], onDelete: Cascade)
+  student Student    @relation(fields: [studentUid], references: [uid], onDelete: Cascade)
+
+  @@unique([sessionId, studentUid], map: "uq_lab_attendance")
+  @@index([sessionId], map: "idx_lab_attendance_session")
+  @@map("lab_attendance")
+}
+
+// =============================================================
+// TABLE 15: LAB_MARKS
+// =============================================================
+model LabMark {
+  markId         Int       @id @default(autoincrement()) @map("mark_id")
+  studentUid     String    @map("student_uid") @db.VarChar(30)
+  subjectId      Int       @map("subject_id")
+  experimentId   Int       @map("experiment_id")
+  sessionId      Int       @map("session_id")
+  vivaMarks      Decimal?  @map("viva_marks") @db.Decimal(5, 2)
+  executionMarks Decimal?  @map("execution_marks") @db.Decimal(5, 2)
+  journalMarks   Decimal?  @map("journal_marks") @db.Decimal(5, 2)
+  totalMarks     Decimal?  @map("total_marks") @db.Decimal(5, 2)
+  remarks        String?   @db.Text
+  updatedBy      Int?      @map("updated_by")
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  student    Student    @relation(fields: [studentUid], references: [uid], onDelete: Cascade)
+  subject    Subject    @relation(fields: [subjectId], references: [subjectId])
+  experiment Experiment @relation(fields: [experimentId], references: [experimentId])
+  session    LabSession @relation(fields: [sessionId], references: [sessionId])
+  faculty    Faculty?   @relation(fields: [updatedBy], references: [facultyId])
+
+  @@unique([studentUid, experimentId], map: "uq_lab_marks")
+  @@index([studentUid], map: "idx_lab_marks_student")
+  @@map("lab_marks")
+}
+
+// =============================================================
+// TABLE 16: LAB_SUBMISSION
+// =============================================================
+model LabSubmission {
+  submissionId Int      @id @default(autoincrement()) @map("submission_id")
+  studentUid   String   @map("student_uid") @db.VarChar(30)
+  experimentId Int      @map("experiment_id")
+  fileUrl      String?  @map("file_url") @db.Text
+  submittedAt  DateTime @default(now()) @map("submitted_at")
+  status       String?  @db.VarChar(15)
+
+  student    Student    @relation(fields: [studentUid], references: [uid])
+  experiment Experiment @relation(fields: [experimentId], references: [experimentId])
+
+  @@map("lab_submission")
+}
+
+// =============================================================
+// TABLE: AICTE_POINTS
+// =============================================================
+model AictePoints {
+  recordId   Int      @id @default(autoincrement()) @map("record_id")
+  studentUid String   @map("student_uid") @db.VarChar(30)
+  activity   String   @db.VarChar(255)
+  points     Int
+  awardedBy  Int      @map("awarded_by")
+  awardedAt  DateTime @default(now()) @map("awarded_at")
+
+  student Student @relation(fields: [studentUid], references: [uid], onDelete: Cascade)
+  faculty Faculty @relation(fields: [awardedBy], references: [facultyId])
+
+  @@index([studentUid], map: "idx_aicte_student")
+  @@map("aicte_points")
+}
+
+// =============================================================
+// TABLE: TG_ASSIGNMENT
+// =============================================================
+model TgAssignment {
+  assignmentId Int    @id @default(autoincrement()) @map("assignment_id")
+  facultyId    Int    @map("faculty_id")
+  studentUid   String @map("student_uid") @db.VarChar(30)
+  semester     Int
+
+  faculty Faculty @relation(fields: [facultyId], references: [facultyId], onDelete: Cascade)
+  student Student @relation(fields: [studentUid], references: [uid], onDelete: Cascade)
+
+  @@unique([facultyId, studentUid, semester], map: "uq_tga")
+  @@index([facultyId], map: "idx_tga_faculty")
+  @@index([studentUid], map: "idx_tga_student")
+  @@map("tg_assignment")
+}

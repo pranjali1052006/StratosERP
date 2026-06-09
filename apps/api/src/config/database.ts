@@ -1,19 +1,8 @@
-import mysql from 'mysql2/promise';
+import { prisma } from '@stratoserp/database';
+import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 
 dotenv.config();
-
-const pool = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  port: Number(process.env.DB_PORT) || 3306,
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'StratosERP',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
-  timezone: '+00:00',
-});
 
 const DEFAULT_ADMIN_NAME = process.env.SEED_ADMIN_NAME || 'Admin User';
 const DEFAULT_ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL || 'admin@tcetmumbai.in';
@@ -21,78 +10,32 @@ const DEFAULT_ADMIN_PASSWORD_HASH =
   process.env.SEED_ADMIN_PASSWORD_HASH || '$2a$12$MH8yz58CwaYYWPklBq5g4OVfMkpP.jD6XIbZxFnFefj5k.4c6gq7K';
 
 export async function testConnection(): Promise<void> {
-  const conn = await pool.getConnection();
-  console.log('[DB] MySQL connection established successfully.');
-  conn.release();
-}
-
-async function tableExists(tableName: string): Promise<boolean> {
-  const [rows] = await pool.query(
-    `SELECT 1 AS exists_flag
-     FROM information_schema.TABLES
-     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
-     LIMIT 1`,
-    [tableName]
-  );
-  return Array.isArray(rows) && rows.length > 0;
-}
-
-async function columnExists(tableName: string, columnName: string): Promise<boolean> {
-  const [rows] = await pool.query(
-    `SELECT 1 AS exists_flag
-     FROM information_schema.COLUMNS
-     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?
-     LIMIT 1`,
-    [tableName, columnName]
-  );
-  return Array.isArray(rows) && rows.length > 0;
+  await prisma.$connect();
+  console.log('[DB] Prisma connection established successfully.');
 }
 
 export async function ensureAuthSchema(): Promise<void> {
-  if (!(await tableExists('admin_user'))) {
-    await pool.query(`
-      CREATE TABLE admin_user (
-        admin_id INT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        email_id VARCHAR(150) NOT NULL UNIQUE,
-        password_hash VARCHAR(255) NOT NULL
-      )
-    `);
-    console.log('[DB] Created missing table: admin_user');
+  // Migrate legacy seeded email to current default.
+  await prisma.adminUser.updateMany({
+    where: { emailId: 'admin@stratoserp.edu' },
+    data: { name: DEFAULT_ADMIN_NAME, emailId: DEFAULT_ADMIN_EMAIL },
+  });
+
+  // Seed one default admin account if none exists.
+  const exists = await prisma.adminUser.findUnique({
+    where: { emailId: DEFAULT_ADMIN_EMAIL },
+  });
+  if (!exists) {
+    await prisma.adminUser.create({
+      data: {
+        name: DEFAULT_ADMIN_NAME,
+        emailId: DEFAULT_ADMIN_EMAIL,
+        passwordHash: DEFAULT_ADMIN_PASSWORD_HASH,
+      },
+    });
   }
-
-  if (await tableExists('faculty')) {
-    if (!(await columnExists('faculty', 'password_hash'))) {
-      await pool.query("ALTER TABLE faculty ADD COLUMN password_hash VARCHAR(255) NOT NULL DEFAULT ''");
-      console.log('[DB] Added missing column: faculty.password_hash');
-    }
-
-    if (!(await columnExists('faculty', 'is_hod'))) {
-      await pool.query('ALTER TABLE faculty ADD COLUMN is_hod BOOLEAN NOT NULL DEFAULT FALSE');
-      console.log('[DB] Added missing column: faculty.is_hod');
-    }
-  }
-
-  if (await tableExists('student') && !(await columnExists('student', 'password_hash'))) {
-    await pool.query("ALTER TABLE student ADD COLUMN password_hash VARCHAR(255) NOT NULL DEFAULT ''");
-    console.log('[DB] Added missing column: student.password_hash');
-  }
-
-  // Keep legacy seeded email aligned with current default email.
-  await pool.query(
-    'UPDATE admin_user SET name = ?, email_id = ? WHERE email_id = ?',
-    [DEFAULT_ADMIN_NAME, DEFAULT_ADMIN_EMAIL, 'admin@stratoserp.edu']
-  );
-
-  // Seed one default admin account if none exists for the configured email.
-  await pool.query(
-    `INSERT INTO admin_user (name, email_id, password_hash)
-     SELECT ?, ?, ?
-     WHERE NOT EXISTS (
-       SELECT 1 FROM admin_user WHERE email_id = ?
-     )`,
-    [DEFAULT_ADMIN_NAME, DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD_HASH, DEFAULT_ADMIN_EMAIL]
-  );
 }
 
-export default pool;
+export async function disconnect(): Promise<void> {
+  await prisma.$disconnect();
+}
